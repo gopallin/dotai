@@ -64,11 +64,23 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
 echo "$UPDATED" > "$SETTINGS"
 echo "✅ Stop hook          → $SETTINGS"
 
+# ── 4. Install rules (global) ─────────────────────────────────────────────────
+
+mkdir -p "$CLAUDE_DIR/rules"
+cp "$DOTAI_DIR/rules/laravel.md" "$CLAUDE_DIR/rules/laravel.md"
+cp "$DOTAI_DIR/rules/vue.md"     "$CLAUDE_DIR/rules/vue.md"
+cp "$DOTAI_DIR/rules/node.md"    "$CLAUDE_DIR/rules/node.md"
+echo "✅ Rules              → $CLAUDE_DIR/rules/"
+
 # ── Done ──────────────────────────────────────────────────────────────────────
 
 echo ""
 echo "dotai installed. Restart Claude Code to activate the Stop hook."
 echo ""
 echo "Available after restart:"
-echo "  /precommit   run lint + build + test"
-echo "  stop-guard   auto-blocks stopping if /precommit was skipped or failed"
+echo "  /precommit      run lint + build + test"
+echo "  stop-guard      auto-blocks stopping if /precommit was skipped or failed"
+echo "  rules/          laravel.md · vue.md · node.md (path-filtered)"
+echo ""
+echo "Note: if path-filtered rules don't activate in a project, run:"
+echo "  bash $DOTAI_DIR/install-project-rules.sh"
