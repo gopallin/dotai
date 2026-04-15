@@ -1,0 +1,8 @@
+{
+  "name": "dotai",
+  "description": "Personal AI workflow quality gates — enforces /precommit runs and passes before Claude can stop after code changes.",
+  "version": "1.0.0",
+  "author": {
+    "name": "gopallin"
+  }
+}
