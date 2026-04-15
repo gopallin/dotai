@@ -45,19 +45,19 @@ else
 fi
 
 # Merge the Stop hook — preserves all existing settings
-UPDATED=$(echo "$EXISTING" | jq '
+UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
   .hooks.Stop = ([
     {
       "hooks": [
         {
           "type": "command",
-          "command": "bash ~/.claude/hooks/stop-guard.sh",
+          "command": "bash \($home)/.claude/hooks/stop-guard.sh",
           "timeout": 15
         }
       ]
     }
   ] + (.hooks.Stop // [] | map(select(
-    .hooks[0].command != "bash ~/.claude/hooks/stop-guard.sh"
+    (.hooks[0].command | test("stop-guard\\.sh$")) | not
   )))
 )')
 

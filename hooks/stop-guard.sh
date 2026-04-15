@@ -28,16 +28,16 @@ fi
 # ── Layer 2a: Was /precommit run? ─────────────────────────────────────────────
 
 if ! grep -q '/precommit' "$TRANSCRIPT" 2>/dev/null; then
-  echo "⛔ Code changes detected but /precommit was not run."
-  echo "Run /precommit and ensure it passes before finishing."
+  echo "⛔ Code changes detected but /precommit was not run." >&2
+  echo "Run /precommit and ensure it passes before finishing." >&2
   exit 2
 fi
 
 # ── Layer 2b: Did /precommit pass? ────────────────────────────────────────────
 
 if ! grep -q 'PRECOMMIT_STATUS=PASS' "$TRANSCRIPT" 2>/dev/null; then
-  echo "⛔ /precommit was run but did not pass."
-  echo "Fix the failures, run /precommit again, and ensure it outputs PRECOMMIT_STATUS=PASS."
+  echo "⛔ /precommit was run but did not pass." >&2
+  echo "Fix the failures, run /precommit again, and ensure it outputs PRECOMMIT_STATUS=PASS." >&2
   exit 2
 fi
 
