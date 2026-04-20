@@ -3,9 +3,10 @@
 # install.sh — install dotai into ~/.claude/
 #
 # What this does:
-#   1. Copies /precommit command to ~/.claude/commands/
-#   2. Copies hook scripts to ~/.claude/hooks/
-#   3. Registers Stop and PreToolUse hooks in ~/.claude/settings.json
+#   1. Syncs global rules from dotai/GLOBAL_RULES.md to ~/.claude/CLAUDE.md
+#   2. Copies /precommit command to ~/.claude/commands/
+#   3. Copies hook scripts to ~/.claude/hooks/
+#   4. Registers Stop and PreToolUse hooks in ~/.claude/settings.json
 
 set -euo pipefail
 
@@ -20,13 +21,21 @@ CLAUDE_DIR="$HOME/.claude"
 echo "Installing dotai from $DOTAI_DIR → $CLAUDE_DIR"
 echo ""
 
-# ── 1. /precommit command ─────────────────────────────────────────────────────
+# ── 1. Global Rules Sync ──────────────────────────────────────────────────────
+
+mkdir -p "$CLAUDE_DIR"
+if [ -f "$DOTAI_DIR/GLOBAL_RULES.md" ]; then
+  cp "$DOTAI_DIR/GLOBAL_RULES.md" "$CLAUDE_DIR/CLAUDE.md"
+  echo "✅ Global Rules       → $CLAUDE_DIR/CLAUDE.md"
+fi
+
+# ── 2. /precommit command ─────────────────────────────────────────────────────
 
 mkdir -p "$CLAUDE_DIR/commands"
 cp "$DOTAI_DIR/commands/precommit.md" "$CLAUDE_DIR/commands/precommit.md"
 echo "✅ /precommit command → $CLAUDE_DIR/commands/precommit.md"
 
-# ── 2. hook scripts ───────────────────────────────────────────────────────────
+# ── 3. hook scripts ───────────────────────────────────────────────────────────
 
 mkdir -p "$CLAUDE_DIR/hooks"
 
@@ -40,7 +49,7 @@ cp "$DOTAI_DIR/hooks/complexity-guard.sh" "$CLAUDE_DIR/hooks/complexity-guard.sh
 chmod +x "$CLAUDE_DIR/hooks/complexity-guard.sh"
 echo "✅ complexity-guard.sh → $CLAUDE_DIR/hooks/complexity-guard.sh"
 
-# ── 3. Register hooks in settings.json ────────────────────────────────────────
+# ── 4. Register hooks in settings.json ────────────────────────────────────────
 
 SETTINGS="$CLAUDE_DIR/settings.json"
 
@@ -86,7 +95,7 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
 echo "$UPDATED" > "$SETTINGS"
 echo "✅ Hooks registered   → $SETTINGS"
 
-# ── 4. Install rules (global) ─────────────────────────────────────────────────
+# ── 5. Install rules (global) ─────────────────────────────────────────────────
 
 mkdir -p "$CLAUDE_DIR/rules"
 cp "$DOTAI_DIR/rules/laravel.md" "$CLAUDE_DIR/rules/laravel.md"

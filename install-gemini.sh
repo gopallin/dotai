@@ -3,8 +3,9 @@
 # install-gemini.sh — install dotai into Gemini CLI (~/.gemini/)
 #
 # What this does:
-#   1. Copies hook scripts to ~/.gemini/hooks/
-#   2. Registers AfterAgent hooks in ~/.gemini/settings.json
+#   1. Syncs global rules from dotai/GLOBAL_RULES.md to ~/.gemini/GEMINI.md
+#   2. Copies hook scripts to ~/.gemini/hooks/
+#   3. Registers AfterAgent hooks in ~/.gemini/settings.json
 
 set -euo pipefail
 
@@ -19,7 +20,15 @@ GEMINI_DIR="$HOME/.gemini"
 echo "Installing dotai → Gemini CLI ($GEMINI_DIR)"
 echo ""
 
-# ── 1. Install hook scripts ───────────────────────────────────────────────────
+# ── 1. Global Rules Sync ──────────────────────────────────────────────────────
+
+mkdir -p "$GEMINI_DIR"
+if [ -f "$DOTAI_DIR/GLOBAL_RULES.md" ]; then
+  cp "$DOTAI_DIR/GLOBAL_RULES.md" "$GEMINI_DIR/GEMINI.md"
+  echo "✅ Global Rules       → $GEMINI_DIR/GEMINI.md"
+fi
+
+# ── 2. Install hook scripts ───────────────────────────────────────────────────
 
 mkdir -p "$GEMINI_DIR/hooks"
 
@@ -33,7 +42,7 @@ cp "$DOTAI_DIR/hooks/complexity-guard.sh" "$GEMINI_DIR/hooks/complexity-guard.sh
 chmod +x "$GEMINI_DIR/hooks/complexity-guard.sh"
 echo "✅ complexity-guard.sh → $GEMINI_DIR/hooks/complexity-guard.sh"
 
-# ── 2. Register hooks in settings.json ────────────────────────────────────────
+# ── 3. Register hooks in settings.json ────────────────────────────────────────
 
 SETTINGS="$GEMINI_DIR/settings.json"
 
@@ -43,7 +52,7 @@ else
   EXISTING="{}"
 fi
 
-# Fixed jq script using variable for home directory and avoiding complex internal logic
+# timeout is milliseconds in Gemini CLI
 UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
   # Define the new hooks
   def new_hooks: [

@@ -3,11 +3,9 @@
 # install-codex.sh — install dotai into Codex CLI (~/.codex/)
 #
 # What this does:
-#   1. Copies stop-guard-codex.sh to ~/.codex/hooks/
-#   2. Registers Stop hook in ~/.codex/hooks.json
-#
-# Note: Codex lifecycle hooks are under development and off by default
-# as of v0.116.0. Enable them in Codex's configuration if needed.
+#   1. Syncs global rules from dotai/GLOBAL_RULES.md to ~/.codex/AGENTS.md
+#   2. Copies stop-guard-codex.sh to ~/.codex/hooks/
+#   3. Registers Stop hook in ~/.codex/hooks.json
 
 set -euo pipefail
 
@@ -22,14 +20,22 @@ CODEX_DIR="$HOME/.codex"
 echo "Installing dotai → Codex CLI ($CODEX_DIR)"
 echo ""
 
-# ── 1. Install hook script ────────────────────────────────────────────────────
+# ── 1. Global Rules Sync ──────────────────────────────────────────────────────
+
+mkdir -p "$CODEX_DIR"
+if [ -f "$DOTAI_DIR/GLOBAL_RULES.md" ]; then
+  cp "$DOTAI_DIR/GLOBAL_RULES.md" "$CODEX_DIR/AGENTS.md"
+  echo "✅ Global Rules       → $CODEX_DIR/AGENTS.md"
+fi
+
+# ── 2. Install hook script ────────────────────────────────────────────────────
 
 mkdir -p "$CODEX_DIR/hooks"
 cp "$DOTAI_DIR/hooks/stop-guard-codex.sh" "$CODEX_DIR/hooks/stop-guard.sh"
 chmod +x "$CODEX_DIR/hooks/stop-guard.sh"
 echo "✅ stop-guard.sh     → $CODEX_DIR/hooks/stop-guard.sh"
 
-# ── 2. Register Stop hook in hooks.json ──────────────────────────────────────
+# ── 3. Register Stop hook in hooks.json ──────────────────────────────────────
 
 HOOKS_FILE="$CODEX_DIR/hooks.json"
 
