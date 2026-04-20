@@ -3,8 +3,8 @@
 # install-gemini.sh — install dotai into Gemini CLI (~/.gemini/)
 #
 # What this does:
-#   1. Copies stop-guard-gemini.sh to ~/.gemini/hooks/
-#   2. Registers AfterAgent hook in ~/.gemini/settings.json
+#   1. Copies hook scripts to ~/.gemini/hooks/
+#   2. Registers AfterAgent hooks in ~/.gemini/settings.json
 
 set -euo pipefail
 
@@ -19,14 +19,21 @@ GEMINI_DIR="$HOME/.gemini"
 echo "Installing dotai → Gemini CLI ($GEMINI_DIR)"
 echo ""
 
-# ── 1. Install hook script ────────────────────────────────────────────────────
+# ── 1. Install hook scripts ───────────────────────────────────────────────────
 
 mkdir -p "$GEMINI_DIR/hooks"
+
+# stop-guard
 cp "$DOTAI_DIR/hooks/stop-guard-gemini.sh" "$GEMINI_DIR/hooks/stop-guard.sh"
 chmod +x "$GEMINI_DIR/hooks/stop-guard.sh"
 echo "✅ stop-guard.sh     → $GEMINI_DIR/hooks/stop-guard.sh"
 
-# ── 2. Register AfterAgent hook in settings.json ──────────────────────────────
+# complexity-guard
+cp "$DOTAI_DIR/hooks/complexity-guard.sh" "$GEMINI_DIR/hooks/complexity-guard.sh"
+chmod +x "$GEMINI_DIR/hooks/complexity-guard.sh"
+echo "✅ complexity-guard.sh → $GEMINI_DIR/hooks/complexity-guard.sh"
+
+# ── 2. Register hooks in settings.json ────────────────────────────────────────
 
 SETTINGS="$GEMINI_DIR/settings.json"
 
@@ -36,9 +43,10 @@ else
   EXISTING="{}"
 fi
 
-# timeout is milliseconds in Gemini CLI
+# Fixed jq script using variable for home directory and avoiding complex internal logic
 UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
-  .hooks.AfterAgent = ([
+  # Define the new hooks
+  def new_hooks: [
     {
       "matcher": "*",
       "hooks": [
@@ -50,20 +58,32 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
           "description": "Enforce precommit quality checks before finishing"
         }
       ]
+    },
+    {
+      "matcher": "grep_search|read_file|glob|list_directory",
+      "hooks": [
+        {
+          "name": "complexity-guard",
+          "type": "command",
+          "command": "bash \($home)/.gemini/hooks/complexity-guard.sh $TOOL_NAME",
+          "timeout": 5000,
+          "description": "Alerts on manual exploration loops"
+        }
+      ]
     }
-  ] + (.hooks.AfterAgent // [] | map(select(
-    (.hooks[0].name // "") != "stop-guard"
-  )))
-)')
+  ];
+
+  # Filter out old versions of these hooks
+  def filter_hooks: map(select((.hooks[0].name // "") != "stop-guard" and (.hooks[0].name // "") != "complexity-guard"));
+
+  .hooks.AfterAgent = (new_hooks + (.hooks.AfterAgent // [] | filter_hooks))
+')
 
 echo "$UPDATED" > "$SETTINGS"
-echo "✅ AfterAgent hook   → $SETTINGS"
+echo "✅ Hooks registered   → $SETTINGS"
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 
 echo ""
 echo "dotai → Gemini CLI installed."
 echo ""
-echo "Note: Gemini uses different file-editing tool names."
-echo "If the guard does not trigger on code changes, check tool names in:"
-echo "  $DOTAI_DIR/hooks/stop-guard-gemini.sh"

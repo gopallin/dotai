@@ -4,8 +4,8 @@
 #
 # What this does:
 #   1. Copies /precommit command to ~/.claude/commands/
-#   2. Copies stop-guard.sh to ~/.claude/hooks/
-#   3. Registers the Stop hook in ~/.claude/settings.json
+#   2. Copies hook scripts to ~/.claude/hooks/
+#   3. Registers Stop and PreToolUse hooks in ~/.claude/settings.json
 
 set -euo pipefail
 
@@ -26,14 +26,21 @@ mkdir -p "$CLAUDE_DIR/commands"
 cp "$DOTAI_DIR/commands/precommit.md" "$CLAUDE_DIR/commands/precommit.md"
 echo "✅ /precommit command → $CLAUDE_DIR/commands/precommit.md"
 
-# ── 2. stop-guard.sh hook script ─────────────────────────────────────────────
+# ── 2. hook scripts ───────────────────────────────────────────────────────────
 
 mkdir -p "$CLAUDE_DIR/hooks"
+
+# stop-guard
 cp "$DOTAI_DIR/hooks/stop-guard.sh" "$CLAUDE_DIR/hooks/stop-guard.sh"
 chmod +x "$CLAUDE_DIR/hooks/stop-guard.sh"
 echo "✅ stop-guard.sh     → $CLAUDE_DIR/hooks/stop-guard.sh"
 
-# ── 3. Register Stop hook in settings.json ────────────────────────────────────
+# complexity-guard
+cp "$DOTAI_DIR/hooks/complexity-guard.sh" "$CLAUDE_DIR/hooks/complexity-guard.sh"
+chmod +x "$CLAUDE_DIR/hooks/complexity-guard.sh"
+echo "✅ complexity-guard.sh → $CLAUDE_DIR/hooks/complexity-guard.sh"
+
+# ── 3. Register hooks in settings.json ────────────────────────────────────────
 
 SETTINGS="$CLAUDE_DIR/settings.json"
 
@@ -44,8 +51,9 @@ else
   EXISTING="{}"
 fi
 
-# Merge the Stop hook — preserves all existing settings
+# Merge hooks — preserves all existing settings
 UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
+  # Register Stop hook
   .hooks.Stop = ([
     {
       "hooks": [
@@ -58,11 +66,25 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
     }
   ] + (.hooks.Stop // [] | map(select(
     (.hooks[0].command | test("stop-guard\\.sh$")) | not
-  )))
-)')
+  )))) |
+  # Register PreToolUse hook for complexity-guard
+  .hooks.PreToolUse = ([
+    {
+      "matcher": "Grep|Read|Glob|grep_search|read_file|glob|list_directory",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash \($home)/.claude/hooks/complexity-guard.sh"
+        }
+      ]
+    }
+  ] + (.hooks.PreToolUse // [] | map(select(
+    (.hooks[0].command | test("complexity-guard\\.sh$")) | not
+  ))))
+')
 
 echo "$UPDATED" > "$SETTINGS"
-echo "✅ Stop hook          → $SETTINGS"
+echo "✅ Hooks registered   → $SETTINGS"
 
 # ── 4. Install rules (global) ─────────────────────────────────────────────────
 
@@ -75,12 +97,13 @@ echo "✅ Rules              → $CLAUDE_DIR/rules/"
 # ── Done ──────────────────────────────────────────────────────────────────────
 
 echo ""
-echo "dotai installed. Restart Claude Code to activate the Stop hook."
+echo "dotai installed. Restart Claude Code to activate the hooks."
 echo ""
 echo "Available after restart:"
-echo "  /precommit      run lint + build + test"
-echo "  stop-guard      auto-blocks stopping if /precommit was skipped or failed"
-echo "  rules/          laravel.md · vue.md · node.md (path-filtered)"
+echo "  /precommit       run lint + build + test"
+echo "  stop-guard       auto-blocks stopping if /precommit was skipped or failed"
+echo "  complexity-guard alerts on manual exploration loops"
+echo "  rules/           laravel.md · vue.md · node.md (path-filtered)"
 echo ""
-echo "Note: if path-filtered rules don't activate in a project, run:"
+echo "Note: if path-filtered rules do not activate in a project, run:"
 echo "  bash $DOTAI_DIR/install-project-rules.sh"
