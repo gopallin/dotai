@@ -43,6 +43,10 @@ Reason: ClickUp API overwrites the entire description. Manual UI formatting (lik
 - No error handling for impossible scenarios.
 - No abstractions for one-time use.
 
-## Complexity-Aware Exploration (Task Agent Rules)
-- **Automatic Suggestion**: When manual exploration (Grep, Read, Glob, etc.) exceeds 5 steps in a single session, a `PreToolUse` hook alerts the user.
-- **Guideline**: Prefer `codebase_investigator` or Task Agents for deep dependency analysis (3+ layers) or wide-ranging searches (>10 files) to maintain clean context and improve speed.
+## Investigation & Agent Strategy
+- **Mandatory Sub-Agent**: For codebase exploration, bug hunting, service tracing, or module auditing, **always** spawn a sub-agent (e.g., `codebase_investigator` or Task Agent) instead of sequential manual tool use.
+- **Context Isolation**: Sub-agents must read raw files in their own isolated context and return a synthesized summary, ensuring the main context remains dedicated to implementation or the final fix.
+- **Complexity Thresholds**: Transition to a sub-agent immediately if:
+  - Deep dependency analysis (> 3 layers) is required.
+  - Wide-ranging searches (> 10 files) are needed.
+  - Manual exploration (Grep/Read/Glob) exceeds 5 steps in a single session (enforced by `PreToolUse` hook).
