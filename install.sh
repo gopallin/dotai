@@ -29,11 +29,14 @@ if [ -f "$DOTAI_DIR/GLOBAL_RULES.md" ]; then
   echo "✅ Global Rules       → $CLAUDE_DIR/CLAUDE.md"
 fi
 
-# ── 2. /precommit command ─────────────────────────────────────────────────────
+# ── 2. Commands ───────────────────────────────────────────────────────────────
 
 mkdir -p "$CLAUDE_DIR/commands"
 cp "$DOTAI_DIR/commands/precommit.md" "$CLAUDE_DIR/commands/precommit.md"
 echo "✅ /precommit command → $CLAUDE_DIR/commands/precommit.md"
+
+cp "$DOTAI_DIR/commands/plan.md" "$CLAUDE_DIR/commands/plan.md"
+echo "✅ /plan command      → $CLAUDE_DIR/commands/plan.md"
 
 # ── 3. hook scripts ───────────────────────────────────────────────────────────
 
@@ -109,6 +112,7 @@ echo ""
 echo "dotai installed. Restart Claude Code to activate the hooks."
 echo ""
 echo "Available after restart:"
+echo "  /plan            structured design planning (B+C hybrid grill-me + auto-output)"
 echo "  /precommit       run lint + build + test"
 echo "  stop-guard       auto-blocks stopping if /precommit was skipped or failed"
 echo "  complexity-guard alerts on manual exploration loops"
