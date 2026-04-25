@@ -15,7 +15,23 @@ Trigger this skill whenever the user:
 
 ## One-Time Setup
 
-### 1. Store Tokens in macOS Keychain (Secure)
+### Option A: SSH Keys (Recommended — Already Configured!)
+
+You're using SSH key authentication, which is **more secure than tokens**:
+
+```bash
+# Check if SSH keys exist (you already have them)
+ls -la ~/.ssh/id_rsa
+
+# SSH keys should already be added to GitHub/GitLab
+# When pushing via SSH (git@github.com:...), no additional setup needed!
+```
+
+This skill automatically detects SSH and handles it correctly.
+
+### Option B: Token Authentication (Keychain)
+
+If you prefer HTTPS token authentication:
 
 ```bash
 # Store GitLab token (company account)
@@ -31,19 +47,38 @@ security find-generic-password -s "gitlab-token" -w
 security find-generic-password -s "github-token" -w
 ```
 
-### 2. Configure Git for Auto-Authentication
+### 2. Configure Git (Already Done for SSH!)
 
+If using SSH (your current setup — no action needed):
+```bash
+# Your remotes already use SSH
+git remote -v
+# Should show: git@github.com:... (not https://...)
+```
+
+If switching to HTTPS tokens:
 ```bash
 # Enable macOS Keychain as credential helper
 git config --global credential.helper osxkeychain
 
-# Optional: Add URL-specific remapping (if using HTTPS)
+# Optional: Add URL-specific remapping
 git config --global url."https://oauth2:GITLAB_TOKEN@gitlab.com/".insteadOf "https://gitlab.com/"
 git config --global url."https://GITHUB_TOKEN@github.com/".insteadOf "https://github.com/"
 ```
 
 ### 3. Verify Setup
 
+For SSH (current):
+```bash
+# Check remote URLs
+git remote -v
+
+# Verify SSH key works
+ssh -T git@github.com
+ssh -T git@gitlab.com
+```
+
+For Keychain tokens:
 ```bash
 # Check Git config
 git config --global --list | grep credential
@@ -55,17 +90,17 @@ security find-generic-password -s "github-token" -w
 
 ---
 
-## Workflow: Automatic URL Detection + Token Selection
+## Workflow: Automatic Detection (SSH or Keychain)
 
 When user initiates a push:
 
-### Step 1: Detect Remote Platform
+### Step 1: Detect Remote Platform & Auth Method
 
 ```bash
 # Get remote URL
 REMOTE_URL=$(git config --get remote.origin.url)
 
-# Determine platform
+# Determine platform and auth method
 if [[ "$REMOTE_URL" == *"gitlab.com"* ]] || [[ "$REMOTE_URL" == *"gitlab"* ]]; then
   PLATFORM="GitLab"
   TOKEN_KEY="gitlab-token"
@@ -76,26 +111,37 @@ else
   echo "❓ Unknown Git platform. Remote: $REMOTE_URL"
   exit 1
 fi
+
+# Detect auth method
+if [[ "$REMOTE_URL" == git@* ]]; then
+  AUTH_METHOD="SSH"
+  echo "🔐 Using SSH key authentication"
+elif [[ "$REMOTE_URL" == https://* ]]; then
+  AUTH_METHOD="HTTPS (Keychain token)"
+  echo "🔐 Using HTTPS token from Keychain"
+fi
 ```
 
-### Step 2: Retrieve Token from Keychain
+### Step 2: Validate Credentials
 
+**If SSH:**
 ```bash
-# Retrieve token securely from Keychain
+# SSH keys are automatic — no validation needed
+# Git will use ~/.ssh/id_rsa or SSH agent
+echo "✅ SSH key ready for $PLATFORM"
+```
+
+**If HTTPS:**
+```bash
+# Retrieve token from Keychain
 TOKEN=$(security find-generic-password -s "$TOKEN_KEY" -w 2>/dev/null)
 
 if [ -z "$TOKEN" ]; then
   echo "❌ $PLATFORM token not found in Keychain"
-  echo "   Please run setup: security add-generic-password -s '$TOKEN_KEY' ..."
+  echo "   Please run: security add-generic-password -s '$TOKEN_KEY' ..."
   exit 1
 fi
 
-echo "✅ Retrieved $PLATFORM token from Keychain"
-```
-
-### Step 3: Set Environment & Push
-
-```bash
 # Set token environment variable
 if [ "$PLATFORM" = "GitLab" ]; then
   export GITLAB_TOKEN="$TOKEN"
@@ -103,17 +149,23 @@ elif [ "$PLATFORM" = "GitHub" ]; then
   export GITHUB_TOKEN="$TOKEN"
 fi
 
+echo "✅ Retrieved $PLATFORM token from Keychain"
+```
+
+### Step 3: Execute Push
+
+```bash
 # Get current branch
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
-# Execute push
+# Execute push (SSH or HTTPS with token)
 git push origin "$BRANCH"
 ```
 
 ### Step 4: Report Result
 
 ```
-✅ Pushed to $PLATFORM
+✅ Pushed to $PLATFORM via $AUTH_METHOD
    Branch: $BRANCH
    Remote: $REMOTE_URL
 ```
@@ -168,41 +220,59 @@ Auth: Uses GITHUB_TOKEN from Keychain
 
 ## Interaction Examples
 
-### Example 1: Push to GitLab (Company)
-
-```
-User: "Push these changes to GitLab"
-
-I (reading this skill):
-1. Detect remote: gitlab.com/company/project
-2. Read gitlab-token from Keychain
-3. Get branch: feature/api
-4. Execute: GITLAB_TOKEN=*** git push origin feature/api
-5. Report: ✅ Pushed feature/api to GitLab
-```
-
-### Example 2: Push to GitHub (Personal)
+### Example 1: Push via SSH (Your Current Setup) ⭐
 
 ```
 User: "Push dotai changes"
 
 I (reading this skill):
-1. Detect remote: github.com/username/dotai
-2. Read github-token from Keychain
+1. Detect remote: git@github.com:gopallin/dotai.git (SSH)
+2. Auth method: SSH key (~/.ssh/id_rsa)
 3. Get branch: main
-4. Execute: GITHUB_TOKEN=*** git push origin main
-5. Report: ✅ Pushed main to GitHub
+4. Execute: git push origin main
+5. Report: ✅ Pushed main to GitHub via SSH
+
+(No token needed — SSH key handles authentication!)
 ```
 
-### Example 3: First-Time User (Missing Token)
+### Example 2: Push to GitLab via HTTPS Token
+
+```
+User: "Push these changes to GitLab"
+
+I (reading this skill):
+1. Detect remote: https://gitlab.com/company/project (HTTPS)
+2. Auth method: Keychain token
+3. Read gitlab-token from Keychain
+4. Get branch: feature/api
+5. Execute: GITLAB_TOKEN=*** git push origin feature/api
+6. Report: ✅ Pushed feature/api to GitLab
+```
+
+### Example 3: Mixed Setup (SSH for GitHub, Token for GitLab)
+
+```
+Repository 1 (~/dotai on GitHub):
+  Remote: git@github.com:gopallin/dotai.git
+  Auth: SSH key ✅
+
+Repository 2 (company GitLab):
+  Remote: https://gitlab.com/company/project.git
+  Auth: Keychain token ✅
+
+Both work automatically!
+```
+
+### Example 4: First-Time Token Setup
 
 ```
 User: "Push to GitLab"
 
 I (reading this skill):
-1. Try to retrieve gitlab-token from Keychain
-2. Token not found
-3. Report error with setup instructions
+1. Detect remote: gitlab.com/company/project
+2. Try to retrieve gitlab-token from Keychain
+3. Token not found
+4. Report error with setup instructions
 
 Setup:
 security add-generic-password -s "gitlab-token" \
