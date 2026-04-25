@@ -127,7 +127,14 @@ Ran but FAIL? Still cannot stop.
 ```
 ~/dotai/                        ← git repo (GitHub: gopallin/dotai)
 ├── CLAUDE.md                   ← this file
-├── install.sh                  ← one-command install to ~/.claude/
+├── install.sh                  ← unified installer entry point
+├── scripts/
+│   ├── claude/
+│   │   └── install.sh          ← Claude Code installer
+│   ├── codex/
+│   │   └── install.sh          ← Codex CLI installer
+│   └── gemini/
+│       └── install.sh          ← Gemini CLI installer
 ├── commands/
 │   ├── precommit.md            ← /precommit slash command
 │   └── plan.md                 ← /plan design planning command
@@ -149,15 +156,26 @@ Ran but FAIL? Still cannot stop.
     └── node.md                 ← Node.js-specific guidelines
 ```
 
-**What "install" means:** `install.sh` copies files to locations recognized by each CLI:
-- `commands/` → `~/.claude/commands/` (Claude Code)
-- `skills/` → `~/.claude/skills/` (all CLIs)
-- `hooks/claude/` → `~/.claude/hooks/claude/` (Claude Code)
-- `hooks/codex/` → `~/.claude/hooks/codex/` (Codex CLI)
-- `hooks/gemini/` → `~/.claude/hooks/gemini/` (Gemini CLI)
-- `hooks/shared/` → `~/.claude/hooks/shared/` (all CLIs)
-- `rules/` → `~/.claude/rules/` (all CLIs)
-- Merges hook config into `~/.claude/settings.json`
+**Installation:**
+
+```bash
+# Claude Code (default)
+bash install.sh
+
+# Codex CLI
+bash install.sh --codex
+
+# Gemini CLI
+bash install.sh --gemini
+
+# All CLIs
+bash install.sh --all
+```
+
+**What each installer does:**
+- Copies files to recognized locations (`~/.claude/`, `~/.codex/`, `~/.gemini/`)
+- Installs commands, skills, hooks, and rules for the selected CLI
+- Merges hook configurations into settings files
 
 ---
 
