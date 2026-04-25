@@ -38,6 +38,14 @@ echo "✅ /precommit command → $CLAUDE_DIR/commands/precommit.md"
 cp "$DOTAI_DIR/commands/plan.md" "$CLAUDE_DIR/commands/plan.md"
 echo "✅ /plan command      → $CLAUDE_DIR/commands/plan.md"
 
+# ── 2b. Skills ────────────────────────────────────────────────────────────────
+
+mkdir -p "$CLAUDE_DIR/skills"
+if [ -d "$DOTAI_DIR/skills" ]; then
+  cp "$DOTAI_DIR/skills"/*.md "$CLAUDE_DIR/skills/" 2>/dev/null || true
+  echo "✅ Skills              → $CLAUDE_DIR/skills/"
+fi
+
 # ── 3. hook scripts ───────────────────────────────────────────────────────────
 
 mkdir -p "$CLAUDE_DIR/hooks"
@@ -117,6 +125,7 @@ echo "  /precommit       run lint + build + test"
 echo "  stop-guard       auto-blocks stopping if /precommit was skipped or failed"
 echo "  complexity-guard alerts on manual exploration loops"
 echo "  rules/           laravel.md · vue.md · node.md (path-filtered)"
+echo "  skills/          gitlab-push (automatic GitLab authentication)"
 echo ""
 echo "Note: if path-filtered rules do not activate in a project, run:"
 echo "  bash $DOTAI_DIR/install-project-rules.sh"
