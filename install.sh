@@ -50,15 +50,29 @@ fi
 
 mkdir -p "$CLAUDE_DIR/hooks"
 
-# stop-guard
-cp "$DOTAI_DIR/hooks/stop-guard.sh" "$CLAUDE_DIR/hooks/stop-guard.sh"
-chmod +x "$CLAUDE_DIR/hooks/stop-guard.sh"
-echo "✅ stop-guard.sh     → $CLAUDE_DIR/hooks/stop-guard.sh"
+# Claude Code hooks
+mkdir -p "$CLAUDE_DIR/hooks/claude"
+cp "$DOTAI_DIR/hooks/claude/stop-guard.sh" "$CLAUDE_DIR/hooks/claude/stop-guard.sh"
+chmod +x "$CLAUDE_DIR/hooks/claude/stop-guard.sh"
+echo "✅ claude/stop-guard.sh     → $CLAUDE_DIR/hooks/claude/stop-guard.sh"
 
-# complexity-guard
-cp "$DOTAI_DIR/hooks/complexity-guard.sh" "$CLAUDE_DIR/hooks/complexity-guard.sh"
-chmod +x "$CLAUDE_DIR/hooks/complexity-guard.sh"
-echo "✅ complexity-guard.sh → $CLAUDE_DIR/hooks/complexity-guard.sh"
+# Codex hooks
+mkdir -p "$CLAUDE_DIR/hooks/codex"
+cp "$DOTAI_DIR/hooks/codex/stop-guard.sh" "$CLAUDE_DIR/hooks/codex/stop-guard.sh"
+chmod +x "$CLAUDE_DIR/hooks/codex/stop-guard.sh"
+echo "✅ codex/stop-guard.sh      → $CLAUDE_DIR/hooks/codex/stop-guard.sh"
+
+# Gemini hooks
+mkdir -p "$CLAUDE_DIR/hooks/gemini"
+cp "$DOTAI_DIR/hooks/gemini/stop-guard.sh" "$CLAUDE_DIR/hooks/gemini/stop-guard.sh"
+chmod +x "$CLAUDE_DIR/hooks/gemini/stop-guard.sh"
+echo "✅ gemini/stop-guard.sh     → $CLAUDE_DIR/hooks/gemini/stop-guard.sh"
+
+# Shared hooks
+mkdir -p "$CLAUDE_DIR/hooks/shared"
+cp "$DOTAI_DIR/hooks/shared/complexity-guard.sh" "$CLAUDE_DIR/hooks/shared/complexity-guard.sh"
+chmod +x "$CLAUDE_DIR/hooks/shared/complexity-guard.sh"
+echo "✅ shared/complexity-guard.sh → $CLAUDE_DIR/hooks/shared/complexity-guard.sh"
 
 # ── 4. Register hooks in settings.json ────────────────────────────────────────
 
@@ -73,33 +87,33 @@ fi
 
 # Merge hooks — preserves all existing settings
 UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
-  # Register Stop hook
+  # Register Stop hook (Claude Code)
   .hooks.Stop = ([
     {
       "hooks": [
         {
           "type": "command",
-          "command": "bash \($home)/.claude/hooks/stop-guard.sh",
+          "command": "bash \($home)/.claude/hooks/claude/stop-guard.sh",
           "timeout": 15
         }
       ]
     }
   ] + (.hooks.Stop // [] | map(select(
-    (.hooks[0].command | test("stop-guard\\.sh$")) | not
+    (.hooks[0].command | test("claude/stop-guard\\.sh$")) | not
   )))) |
-  # Register PreToolUse hook for complexity-guard
+  # Register PreToolUse hook for complexity-guard (shared)
   .hooks.PreToolUse = ([
     {
       "matcher": "Grep|Read|Glob|grep_search|read_file|glob|list_directory",
       "hooks": [
         {
           "type": "command",
-          "command": "bash \($home)/.claude/hooks/complexity-guard.sh"
+          "command": "bash \($home)/.claude/hooks/shared/complexity-guard.sh"
         }
       ]
     }
   ] + (.hooks.PreToolUse // [] | map(select(
-    (.hooks[0].command | test("complexity-guard\\.sh$")) | not
+    (.hooks[0].command | test("shared/complexity-guard\\.sh$")) | not
   ))))
 ')
 

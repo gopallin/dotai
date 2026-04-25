@@ -115,7 +115,10 @@ Ran but FAIL? Still cannot stop.
 - Requires `jq` for parsing (pre-installed on macOS)
 - exit 0 = allow stop, exit 2 = block stop
 
-**File location:** `hooks/stop-guard.sh`
+**File locations:** 
+- `hooks/claude/stop-guard.sh` (Claude Code)
+- `hooks/codex/stop-guard.sh` (Codex CLI)
+- `hooks/gemini/stop-guard.sh` (Gemini CLI)
 
 ---
 
@@ -124,19 +127,36 @@ Ran but FAIL? Still cannot stop.
 ```
 ~/dotai/                        ← git repo (GitHub: gopallin/dotai)
 ├── CLAUDE.md                   ← this file
-├── README.md                   ← human-readable documentation
-├── plugin.json                 ← Claude Code plugin manifest
 ├── install.sh                  ← one-command install to ~/.claude/
 ├── commands/
-│   └── precommit.md            ← /precommit slash command
-└── hooks/
-    ├── hooks.json              ← declares the Stop event hook
-    └── stop-guard.sh           ← double-layer validation script
+│   ├── precommit.md            ← /precommit slash command
+│   └── plan.md                 ← /plan design planning command
+├── skills/
+│   └── git-push.md             ← automatic GitLab/GitHub push
+├── hooks/
+│   ├── hooks.json              ← hook event declarations
+│   ├── claude/
+│   │   └── stop-guard.sh       ← Claude Code Stop event hook
+│   ├── codex/
+│   │   └── stop-guard.sh       ← Codex CLI Stop event hook
+│   ├── gemini/
+│   │   └── stop-guard.sh       ← Gemini CLI Stop event hook
+│   └── shared/
+│       └── complexity-guard.sh ← shared PreToolUse hook (all CLIs)
+└── rules/
+    ├── laravel.md              ← Laravel-specific guidelines
+    ├── vue.md                  ← Vue.js-specific guidelines
+    └── node.md                 ← Node.js-specific guidelines
 ```
 
-**What "install" means:** `install.sh` copies or symlinks files to locations Claude Code recognizes:
-- `commands/precommit.md` → `~/.claude/commands/precommit.md`
-- `hooks/stop-guard.sh` → `~/.claude/hooks/stop-guard.sh`
+**What "install" means:** `install.sh` copies files to locations recognized by each CLI:
+- `commands/` → `~/.claude/commands/` (Claude Code)
+- `skills/` → `~/.claude/skills/` (all CLIs)
+- `hooks/claude/` → `~/.claude/hooks/claude/` (Claude Code)
+- `hooks/codex/` → `~/.claude/hooks/codex/` (Codex CLI)
+- `hooks/gemini/` → `~/.claude/hooks/gemini/` (Gemini CLI)
+- `hooks/shared/` → `~/.claude/hooks/shared/` (all CLIs)
+- `rules/` → `~/.claude/rules/` (all CLIs)
 - Merges hook config into `~/.claude/settings.json`
 
 ---
