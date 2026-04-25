@@ -140,6 +140,3 @@ echo "  stop-guard       auto-blocks stopping if /precommit was skipped or faile
 echo "  complexity-guard alerts on manual exploration loops"
 echo "  rules/           laravel.md · vue.md · node.md (path-filtered)"
 echo "  skills/          git-push (auto-detect GitLab/GitHub + Keychain auth)"
-echo ""
-echo "Note: if path-filtered rules do not activate in a project, run:"
-echo "  bash $DOTAI_DIR/install-project-rules.sh"
