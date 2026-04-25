@@ -43,10 +43,38 @@ Reason: ClickUp API overwrites the entire description. Manual UI formatting (lik
 - No error handling for impossible scenarios.
 - No abstractions for one-time use.
 
+## Pre-Optimization Semantic Check
+Before proposing optimizations or refactoring:
+1. **Verify understanding** — Explicitly confirm you have read and understood the relevant code sections.
+2. **If context is insufficient** — Even if you've read the code earlier, if the current conversation lacks sufficient context to justify the change, **ask for confirmation** before proceeding.
+3. **Example**: "Before I suggest refactoring this function, let me re-read it to ensure I understand the current behavior and constraints."
+
+**Rationale**: Prevents incorrect or context-blind optimization suggestions that ignore hidden constraints, performance requirements, or architectural decisions.
+
 ## Investigation & Agent Strategy
-- **Mandatory Sub-Agent**: For codebase exploration, bug hunting, service tracing, or module auditing, **always** spawn a sub-agent (e.g., `codebase_investigator` or Task Agent) instead of sequential manual tool use.
-- **Context Isolation**: Sub-agents must read raw files in their own isolated context and return a synthesized summary, ensuring the main context remains dedicated to implementation or the final fix.
-- **Complexity Thresholds**: Transition to a sub-agent immediately if:
-  - Deep dependency analysis (> 3 layers) is required.
-  - Wide-ranging searches (> 10 files) are needed.
-  - Manual exploration (Grep/Read/Glob) exceeds 5 steps in a single session (enforced by `PreToolUse` hook).
+
+### Codebase Exploration Detection & Suggestion
+When you detect a deep exploration pattern (NOT trivial single-query lookups), **suggest** spawning a Task agent instead of continuing sequential manual tool use.
+
+**Trigger Conditions (any 2 of 3 trigger a suggestion):**
+1. **Tool chaining**: Grep + Read + Glob called in sequence (not isolated calls)
+2. **Keyword signals**: User asks to "trace", "find all", "where is", "list every", or similar exploration language
+3. **Cumulative work**: Session has accumulated 5+ Grep calls AND 3+ Read calls (not just 5 total steps)
+
+**Combination logic:**
+- Tool chaining + Keywords → suggest (e.g., "trace the auth flow" with Grep calls)
+- Tool chaining + Cumulative → suggest (e.g., 6 Grep calls in chained sequence)
+- Keywords + Cumulative → suggest (e.g., user says "find all imports" and 4 Grep + 4 Read calls exist)
+- All three → definitely suggest
+
+**Behavior (not mandatory):**
+- When conditions match, **suggest**: "This looks like deep codebase exploration. Want me to spawn a Task agent to parallelize the search and leave your context cleaner?"
+- Wait for user decision. User can say "no, keep going" and you continue manually.
+- Do NOT force or block; let the user decide the trade-off.
+
+**Rationale**: Parallel agents reduce context fragmentation and isolate heavy Grep/Read work, but only when exploration is substantial enough to justify the overhead. Trivial lookups should remain inline.
+
+### Other Investigation Patterns
+- **Context Isolation**: For bug hunting, service tracing, or module auditing where you spawn a sub-agent, ensure sub-agents read raw files in their own isolated context and return a synthesized summary, keeping the main context dedicated to implementation or the final fix.
+- **Deep Dependency Analysis**: If tracing requires > 3 layers of dependency, consider delegating to a sub-agent.
+- **Wide-ranging Searches**: If you need to search > 10 files, consider delegating to a sub-agent.

@@ -14,7 +14,7 @@ command -v jq >/dev/null 2>&1 || {
   exit 1
 }
 
-DOTAI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DOTAI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CODEX_DIR="$HOME/.codex"
 
 echo "Installing dotai → Codex CLI ($CODEX_DIR)"
@@ -28,12 +28,16 @@ if [ -f "$DOTAI_DIR/GLOBAL_RULES.md" ]; then
   echo "✅ Global Rules       → $CODEX_DIR/AGENTS.md"
 fi
 
-# ── 2. Install hook script ────────────────────────────────────────────────────
+# ── 2. Install hook scripts ───────────────────────────────────────────────────
 
-mkdir -p "$CODEX_DIR/hooks"
-cp "$DOTAI_DIR/hooks/stop-guard-codex.sh" "$CODEX_DIR/hooks/stop-guard.sh"
+mkdir -p "$CODEX_DIR/hooks/shared"
+cp "$DOTAI_DIR/hooks/codex/stop-guard.sh" "$CODEX_DIR/hooks/stop-guard.sh"
 chmod +x "$CODEX_DIR/hooks/stop-guard.sh"
-echo "✅ stop-guard.sh     → $CODEX_DIR/hooks/stop-guard.sh"
+echo "✅ codex/stop-guard.sh     → $CODEX_DIR/hooks/stop-guard.sh"
+
+cp "$DOTAI_DIR/hooks/shared/branch-guard.sh" "$CODEX_DIR/hooks/shared/branch-guard.sh"
+chmod +x "$CODEX_DIR/hooks/shared/branch-guard.sh"
+echo "✅ shared/branch-guard.sh  → $CODEX_DIR/hooks/shared/branch-guard.sh"
 
 # ── 3. Register Stop hook in hooks.json ──────────────────────────────────────
 
@@ -47,6 +51,7 @@ fi
 
 # timeout is seconds in Codex CLI
 UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
+  # Register Stop hook
   .hooks.Stop = ([
     {
       "hooks": [
@@ -59,13 +64,32 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
     }
   ] + (.hooks.Stop // [] | map(select(
     (.hooks[0].command | test("stop-guard\\.sh$")) | not
-  )))
-)')
+  )))) |
+  # Register PreToolUse hook for branch-guard
+  .hooks.PreToolUse = ([
+    {
+      "matcher": "Bash",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash \($home)/.codex/hooks/shared/branch-guard.sh",
+          "timeout": 5
+        }
+      ]
+    }
+  ] + (.hooks.PreToolUse // [] | map(select(
+    (.hooks[0].command | test("branch-guard\\.sh$")) | not
+  ))))
+')
 
 echo "$UPDATED" > "$HOOKS_FILE"
-echo "✅ Stop hook         → $HOOKS_FILE"
+echo "✅ Hooks registered  → $HOOKS_FILE"
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 
 echo ""
 echo "dotai → Codex CLI installed."
+echo ""
+echo "Available after restart:"
+echo "  stop-guard       auto-blocks stopping if verifications incomplete"
+echo "  branch-guard     prevents accidental pushes to master/main"

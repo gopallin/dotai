@@ -15,7 +15,7 @@ command -v jq >/dev/null 2>&1 || {
   exit 1
 }
 
-DOTAI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DOTAI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CLAUDE_DIR="$HOME/.claude"
 
 echo "Installing dotai from $DOTAI_DIR → $CLAUDE_DIR"
@@ -74,6 +74,10 @@ cp "$DOTAI_DIR/hooks/shared/complexity-guard.sh" "$CLAUDE_DIR/hooks/shared/compl
 chmod +x "$CLAUDE_DIR/hooks/shared/complexity-guard.sh"
 echo "✅ shared/complexity-guard.sh → $CLAUDE_DIR/hooks/shared/complexity-guard.sh"
 
+cp "$DOTAI_DIR/hooks/shared/branch-guard.sh" "$CLAUDE_DIR/hooks/shared/branch-guard.sh"
+chmod +x "$CLAUDE_DIR/hooks/shared/branch-guard.sh"
+echo "✅ shared/branch-guard.sh     → $CLAUDE_DIR/hooks/shared/branch-guard.sh"
+
 # ── 4. Register hooks in settings.json ────────────────────────────────────────
 
 SETTINGS="$CLAUDE_DIR/settings.json"
@@ -101,7 +105,7 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
   ] + (.hooks.Stop // [] | map(select(
     (.hooks[0].command | test("claude/stop-guard\\.sh$")) | not
   )))) |
-  # Register PreToolUse hook for complexity-guard (shared)
+  # Register PreToolUse hooks (complexity-guard + branch-guard)
   .hooks.PreToolUse = ([
     {
       "matcher": "Grep|Read|Glob|grep_search|read_file|glob|list_directory",
@@ -111,9 +115,19 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
           "command": "bash \($home)/.claude/hooks/shared/complexity-guard.sh"
         }
       ]
+    },
+    {
+      "matcher": "Bash",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash \($home)/.claude/hooks/shared/branch-guard.sh",
+          "timeout": 5
+        }
+      ]
     }
   ] + (.hooks.PreToolUse // [] | map(select(
-    (.hooks[0].command | test("shared/complexity-guard\\.sh$")) | not
+    (.hooks[0].command | test("shared/(complexity|branch)-guard\\.sh$")) | not
   ))))
 ')
 
@@ -138,5 +152,6 @@ echo "  /plan            structured design planning (user chooses to save to pla
 echo "  /precommit       run lint + build + test"
 echo "  stop-guard       auto-blocks stopping if /precommit was skipped or failed"
 echo "  complexity-guard alerts on manual exploration loops"
+echo "  branch-guard     prevents accidental pushes to master/main"
 echo "  rules/           laravel.md · vue.md · node.md (path-filtered)"
 echo "  skills/          git-push (auto-detect GitLab/GitHub + Keychain auth)"

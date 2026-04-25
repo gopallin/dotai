@@ -14,7 +14,7 @@ command -v jq >/dev/null 2>&1 || {
   exit 1
 }
 
-DOTAI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DOTAI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 GEMINI_DIR="$HOME/.gemini"
 
 echo "Installing dotai → Gemini CLI ($GEMINI_DIR)"
@@ -30,17 +30,23 @@ fi
 
 # ── 2. Install hook scripts ───────────────────────────────────────────────────
 
-mkdir -p "$GEMINI_DIR/hooks"
+mkdir -p "$GEMINI_DIR/hooks/shared"
 
 # stop-guard
-cp "$DOTAI_DIR/hooks/stop-guard-gemini.sh" "$GEMINI_DIR/hooks/stop-guard.sh"
+cp "$DOTAI_DIR/hooks/gemini/stop-guard.sh" "$GEMINI_DIR/hooks/stop-guard.sh"
 chmod +x "$GEMINI_DIR/hooks/stop-guard.sh"
 echo "✅ stop-guard.sh     → $GEMINI_DIR/hooks/stop-guard.sh"
 
 # complexity-guard
-cp "$DOTAI_DIR/hooks/complexity-guard.sh" "$GEMINI_DIR/hooks/complexity-guard.sh"
+cp "$DOTAI_DIR/hooks/shared/complexity-guard.sh" "$GEMINI_DIR/hooks/complexity-guard.sh"
 chmod +x "$GEMINI_DIR/hooks/complexity-guard.sh"
 echo "✅ complexity-guard.sh → $GEMINI_DIR/hooks/complexity-guard.sh"
+
+# branch-guard (stored but not auto-triggered; Gemini CLI lacks PreCommand hook)
+mkdir -p "$GEMINI_DIR/hooks/shared"
+cp "$DOTAI_DIR/hooks/shared/branch-guard.sh" "$GEMINI_DIR/hooks/shared/branch-guard.sh"
+chmod +x "$GEMINI_DIR/hooks/shared/branch-guard.sh"
+echo "✅ shared/branch-guard.sh → $GEMINI_DIR/hooks/shared/branch-guard.sh (manual invoke)"
 
 # ── 3. Register hooks in settings.json ────────────────────────────────────────
 
@@ -99,6 +105,7 @@ echo ""
 echo "Available:"
 echo "  stop-guard       auto-blocks stopping if quality checks were skipped"
 echo "  complexity-guard alerts on manual exploration loops"
+echo "  branch-guard     (available for manual invoke; auto-trigger requires PreCommand hook support)"
 echo "  rules/           GEMINI.md with global AI CLI rules"
 echo ""
 echo "Note: /plan command is Claude Code-only. Gemini CLI uses structured prompts instead."
