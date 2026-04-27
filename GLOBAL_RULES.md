@@ -58,6 +58,28 @@ Reason: ClickUp API overwrites the entire description. Manual UI formatting (lik
   - Push and create a PR; do NOT force-push to main/master
 - **Hook enforcement**: `branch-guard.sh` (PreToolUse hook) automatically rejects bash operations on master/main — obey these rejections, do not attempt to bypass with `--no-verify` flags
 
+## Git Workflow Discipline
+
+**CRITICAL: Do NOT auto-commit or auto-push without explicit user instruction.**
+
+- **Default behavior**: After making changes, STOP and wait for user to decide
+  - Do NOT automatically run `git add`, `git commit`, or `git push`
+  - Do NOT assume the user wants their changes committed yet
+  - Changes may need review, additional work, or selective staging
+
+- **Only commit when user explicitly asks**:
+  - User says: "commit this" or "create a commit" or similar explicit instruction
+  - User runs `/precommit` skill (quality verification before commit)
+  - Only then: run `git add`, `git commit`, `git push` (if explicitly requested)
+
+- **Why this matters**:
+  - Users may want to stage specific files, not all changes
+  - Users may want to review diffs before committing
+  - Automatic commits bypass user's code review and quality gates
+  - Respect user's control over their own repository history
+
+**Exception**: Only auto-commit if this specific project has explicitly documented a different workflow (check CLAUDE.md in the project root)
+
 ## Pre-Optimization Semantic Check
 Before proposing optimizations or refactoring:
 1. **Verify understanding** — Explicitly confirm you have read and understood the relevant code sections.
