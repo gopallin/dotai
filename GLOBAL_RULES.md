@@ -1,7 +1,9 @@
 # AI CLI Global Rules
 
-## Response Style
-- Match the user's language in every reply.
+## Response Style & Language
+- **Match the user's language in every reply** — 優先使用繁體中文 (Traditional Chinese first)
+  - Exception: Code blocks, JSON, file paths, shell commands, error messages, and API documentation remain in English
+  - Mix languages naturally when discussing code (e.g., 變數名稱 variable names)
 - Be **extremely concise and direct** — no filler, no preamble, no trailing summaries.
 - If you don't know something, say so. Never guess or hallucinate.
 
@@ -31,6 +33,9 @@ Rules:
 - Shell: zsh (macOS)
 - When generating shell commands, avoid unescaped special characters: `[`, `]`, `(`, `)`, `*`, `?`
 - If these characters are needed, use quotes or `\` to escape them
+- **Home expansion**: Use `~` in paths (e.g., `~/.claude/rules`) — do NOT expand to `/Users/user` in commands or documentation
+- **Configuration guidance**: Reference `~/.zshrc` for environment setup; do NOT assume specific env vars unless documented in CLAUDE.md
+- **Error redirection**: Use `command > /tmp/file.out 2>&1` to capture both stdout and stderr; do NOT discard stderr silently with `2>/dev/null` unless explicitly necessary
 
 ## ClickUp API Writing Rules
 - **Cards maintained by me** → Write directly using API. I handle formatting; users should not manually edit descriptions in the UI.
@@ -42,6 +47,16 @@ Reason: ClickUp API overwrites the entire description. Manual UI formatting (lik
 - No unnecessary comments, docstrings, or type annotations on unchanged code.
 - No error handling for impossible scenarios.
 - No abstractions for one-time use.
+
+## Branch Discipline
+- **Before any edits or commits**: Explicitly confirm you are on the correct branch (not `master` or `main`)
+  - Use `git rev-parse --abbrev-ref HEAD` to verify
+  - Never edit, commit, or push changes from `master` or `main` branch
+- **Protected branch workflow**:
+  - Create feature branch: `git checkout -b feature/description`
+  - Make changes and commit on feature branch
+  - Push and create a PR; do NOT force-push to main/master
+- **Hook enforcement**: `branch-guard.sh` (PreToolUse hook) automatically rejects bash operations on master/main — obey these rejections, do not attempt to bypass with `--no-verify` flags
 
 ## Pre-Optimization Semantic Check
 Before proposing optimizations or refactoring:
