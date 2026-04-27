@@ -93,3 +93,44 @@ When you detect a deep exploration pattern (NOT trivial single-query lookups), *
 - **Context Isolation**: For bug hunting, service tracing, or module auditing where you spawn a sub-agent, ensure sub-agents read raw files in their own isolated context and return a synthesized summary, keeping the main context dedicated to implementation or the final fix.
 - **Deep Dependency Analysis**: If tracing requires > 3 layers of dependency, consider delegating to a sub-agent.
 - **Wide-ranging Searches**: If you need to search > 10 files, consider delegating to a sub-agent.
+
+## Multi-Agent Coordination — Auto-Detection & Suggestion
+
+When you detect a **complex architectural decision**, proactively suggest multi-agent parallel exploration.
+
+### Auto-Trigger Conditions (any 2 of 3)
+1. **Binary+ choice**: User asks "Should we use X or Y?" OR mentions 3+ viable options
+2. **High impact**: Decision affects team/product behavior for > 3 months
+3. **Language signals**: User mentions "tradeoff", "comparison", "pros and cons", "which is better", "should we migrate to"
+
+### Suggested Response
+
+```
+User: "Should we use monorepo or multi-repo for our growing team?"
+
+Claude: "This is a high-impact architectural decision worth exploring from multiple angles. 
+Would you like me to use /parallel-design-agents to launch 3 agents in parallel:
+
+- Agent 1: Deep dive on monorepo (Nx/Turborepo approach)
+- Agent 2: Deep dive on multi-repo (npm packages approach)
+- Agent 3: Deep dive on hybrid (core monorepo + federated packages)
+- Synthesis: Compare tradeoffs and recommend
+
+Estimated time: 6-8 hours of parallel thinking.
+This decision affects your team for 2+ years, so ROI is strong.
+
+Proceed? Yes / No / Tell me more"
+```
+
+### When NOT to Suggest
+- Simple factual lookup ("What's Node.js LTS?")
+- Single obvious path ("How do I fix this bug?")
+- Trivial preference ("lodash vs underscore?")
+- Already reversed decision ("We already chose React")
+
+### What Synthesis Agent Should Deliver
+1. **Comparison matrix** — Each approach vs. decision criteria
+2. **Risk assessment** — Tradeoffs and mitigation for each
+3. **Team readiness** — Learning curve, implementation effort
+4. **Clear recommendation** — Which approach, with confidence level
+5. **Next steps** — Concrete implementation path
