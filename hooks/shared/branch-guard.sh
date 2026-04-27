@@ -4,32 +4,35 @@
 # Prevents accidental pushes to master/main branches.
 # Triggered on PreToolUse when Bash tool is about to execute.
 #
+# Strategy: Check current git branch (reliable) rather than parsing bash command
+# (which may not be available in PreToolUse hook context).
+#
 
-# Hook receives Bash tool parameters via stdin (JSON) or environment
-# Attempt to parse command from available sources
-BASH_COMMAND=""
-
-# Method 1: Read from stdin if available (Claude Code hook input)
-if [ -s /dev/stdin ]; then
-    BASH_COMMAND=$(cat | grep -oE '"command":\s*"[^"]*"' | head -1 | cut -d'"' -f4)
+# Only check if we're in a git repository
+if ! git rev-parse --git-dir > /dev/null 2>&1; then
+    exit 0
 fi
 
-# Method 2: Fallback to positional arguments
-if [ -z "$BASH_COMMAND" ]; then
-    BASH_COMMAND="$@"
-fi
+# Get current branch
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
 
-# Check if command is attempting to push to protected branches
-if echo "$BASH_COMMAND" | grep -qE "git\s+push.*\b(master|main)\b"; then
+# Allow all branches except master/main
+if [ "$CURRENT_BRANCH" = "master" ] || [ "$CURRENT_BRANCH" = "main" ]; then
     cat >&2 << 'EOF'
 ❌ dotai Branch Protection
 ━━━━━━━━━━━━━━━━━━━━━━━━━
-Cannot push to master/main directly. Use a feature branch + PR instead.
+You are currently on 'master' or 'main' branch.
+Cannot edit, commit, or push from protected branches.
 
-If you intentionally want to push to master, use:
-  git push --force-with-lease origin master
+To proceed:
+1. Create a feature branch: git checkout -b feature/your-feature
+2. Make changes there
+3. Push and create a PR
 
-(Not recommended for shared repos.)
+If you intentionally need to edit main:
+- Use git checkout to switch to main manually
+- Make changes
+- Use: git push --force-with-lease origin main (NOT RECOMMENDED)
 EOF
     exit 2
 fi
