@@ -60,25 +60,42 @@ Reason: ClickUp API overwrites the entire description. Manual UI formatting (lik
 
 ## Git Workflow Discipline
 
-**CRITICAL: Do NOT auto-commit or auto-push without explicit user instruction.**
+⚠️ **CRITICAL — NON-NEGOTIABLE RULE. ENFORCED AT MULTIPLE LEVELS.**
 
-- **Default behavior**: After making changes, STOP and wait for user to decide
-  - Do NOT automatically run `git add`, `git commit`, or `git push`
-  - Do NOT assume the user wants their changes committed yet
-  - Changes may need review, additional work, or selective staging
+### The Rule
+Do NOT execute `git add`, `git commit`, `git push`, `git rebase`, or `git reset` without **explicit user authorization**.
 
-- **Only commit when user explicitly asks**:
-  - User says: "commit this" or "create a commit" or similar explicit instruction
-  - User runs `/precommit` skill (quality verification before commit)
-  - Only then: run `git add`, `git commit`, `git push` (if explicitly requested)
+**This is not a guideline. This is a hard boundary.**
 
-- **Why this matters**:
-  - Users may want to stage specific files, not all changes
-  - Users may want to review diffs before committing
-  - Automatic commits bypass user's code review and quality gates
-  - Respect user's control over their own repository history
+### Default Behavior (After Any Code Changes)
+1. **STOP immediately** after writing files
+2. **Do NOT execute any git commands** without user instruction
+3. **Do NOT assume** the user wants changes committed
+4. **Wait for user decision** — they control their own repository
 
-**Exception**: Only auto-commit if this specific project has explicitly documented a different workflow (check CLAUDE.md in the project root)
+### When Git Operations Are Permitted
+Only when user explicitly says one of:
+- "commit this" / "create a commit" / "git commit"
+- "push this" / "git push"
+- "commit and push"
+- Runs `/precommit` skill (quality check before commit)
+
+**Anything less than explicit is not authorization.**
+
+### Why This Rule Exists
+- Users may want selective staging (specific files, not all)
+- Users may want to review diffs before committing
+- Automatic commits bypass code review and quality gates
+- **Repository history is user's property** — not AI's
+- Failed automatic operations can corrupt unpushed work
+
+### Consequences of Violation
+- Lost work and corrupted git history
+- User loses control over when/what is committed
+- Broken workflows and trust
+- This rule cannot be worked around
+
+**Exception**: Only if this specific project's CLAUDE.md explicitly documents a different workflow (check carefully before proceeding)
 
 ## Pre-Optimization Semantic Check
 Before proposing optimizations or refactoring:
