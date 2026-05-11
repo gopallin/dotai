@@ -216,6 +216,53 @@ Tech stack detection logic for `/precommit`:
 
 ---
 
+## LSP (Language Server Protocol) Integration
+
+**⚠️ Claude Code Only (v2.0.74+)**
+
+Claude Code now supports LSP for real-time code intelligence. This allows Claude to understand code structure, type definitions, and symbol relationships instead of relying on text search.
+
+*Note: Gemini CLI and Codex CLI do not yet have native LSP support. Future roadmap includes MCP-based LSP Bridge for those CLIs.*
+
+**Supported Languages:**
+- PHP/Laravel (via Intelephense)
+- TypeScript/JavaScript (via TypeScript LS)
+- Vue 3+ (via Vue LS)
+
+**Setup (Claude Code only):**
+```bash
+# 1. Install all LSP servers
+bash scripts/install-lsp.sh
+
+# 2. Enable LSP in your shell
+export ENABLE_LSP_TOOL=1
+
+# 3. Make permanent - add to ~/.zprofile
+echo 'export ENABLE_LSP_TOOL=1' >> ~/.zprofile
+```
+
+**Benefits:**
+- Symbol lookup: 50ms instead of 45 seconds (text search)
+- Real-time type error detection during edits
+- Accurate function signatures and return types
+- Fewer "wrong approach" reversals in code reviews
+
+**Configuration:**
+- All LSP settings are in `.claude/plugins/lsp/.lsp.json`
+- Each language server is pre-configured for this project
+- See `docs/LSP_SETUP.md` for detailed troubleshooting
+
+**Integration with dotai Workflows:**
+- `/precommit` can now validate type errors from LSP before commit
+- `stop-guard` hook checks LSP diagnostics to prevent merging broken code
+- Code review sessions benefit from accurate type context
+
+**Future: Gemini CLI & Codex CLI Support**
+- Waiting for native LSP or official MCP LSP Bridge support
+- Will implement via [Codex LSP Bridge](https://glama.ai/mcp/servers/CesarPetrescu/lsp-mcp) when ready
+
+---
+
 ## Future Scope (Out of Scope for Now)
 
 - Adapters for Gemini CLI and other AI CLIs
