@@ -1,5 +1,11 @@
 # Claude Code LSP (Language Server Protocol) Setup
 
+**⚠️ Claude Code Only (v2.0.74+)**
+
+This guide is for Claude Code CLI. Gemini CLI and Codex CLI do not yet have native LSP support. See end of document for future roadmap.
+
+---
+
 ## What You Get
 
 Once LSP is enabled, Claude automatically:
@@ -87,3 +93,19 @@ which vue-language-server
 **Type checking too strict?**
 - Configure `tsconfig.json` (TypeScript) or `phpstan.neon` (PHP) to relax rules
 - LSP respects your project's existing configuration
+
+---
+
+## Future: Gemini CLI & Codex CLI Support
+
+### Current Status (May 2026)
+- **Gemini CLI** — [Feature request #2465](https://github.com/google-gemini/gemini-cli/issues/2465) open. Currently uses MCP and Agent Client Protocol (ACP).
+- **Codex CLI** — [Feature request #8633](https://github.com/openai/codex/issues/8633) open. Workaround: [Codex LSP Bridge](https://glama.ai/mcp/servers/CesarPetrescu/lsp-mcp) via MCP.
+
+### Next Steps
+Once Gemini CLI or Codex CLI get native LSP support:
+1. Add corresponding `.lsp.json` entries
+2. Update `scripts/gemini/install.sh` and `scripts/codex/install.sh` with LSP binary installation
+3. Cross-CLI LSP feature parity achieved
+
+For now, this dotai LSP integration is **Claude Code exclusive**.
