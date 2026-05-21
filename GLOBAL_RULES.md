@@ -17,6 +17,13 @@ Before writing any code or making changes, follow this workflow:
    - **Assumptions:** ...
    - **Out of scope:** ...
 
+## Think Before Coding
+- State assumptions explicitly. If uncertain, ask rather than guess.
+- Present multiple interpretations when ambiguity exists.
+- Push back when a simpler approach exists.
+- **Stop when confused.** Name what's unclear instead of proceeding with a guess.
+- If the user's request could be solved three ways, surface all three with tradeoffs before picking one.
+
 ## Coding Standards — SOLID Principles
 Strictly enforce SOLID principles in all software development tasks:
 - **S** — Single Responsibility
@@ -28,6 +35,22 @@ Strictly enforce SOLID principles in all software development tasks:
 Rules:
 - If the user proposes code or design that violates SOLID, **immediately point it out and correct it**.
 - If existing project code violates SOLID, **flag it but do not auto-fix** unless explicitly asked.
+
+## Simplicity First
+- Minimum code that solves the problem. Nothing speculative.
+- No features beyond what was asked. No abstractions for single-use code.
+- Test: would a senior engineer say this is overcomplicated? If yes, simplify.
+
+## Surgical Changes
+- Touch only what you must. Clean up only your own mess.
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor what isn't broken. Match existing style.
+- Exception: if you discover a genuine bug or security issue in adjacent code, flag it but don't fix unless explicitly asked.
+
+## Goal-Driven Execution
+- Define success criteria at the start, not after beginning work.
+- Loop until goal is verified, not until steps are completed.
+- Strong success criteria let you iterate independently without constant user checkpoints.
 
 ## Shell Environment
 - Shell: zsh (macOS)
@@ -41,6 +64,11 @@ Rules:
 - **Cards maintained by me** → Write directly using API. I handle formatting; users should not manually edit descriptions in the UI.
 - **Cards manually formatted by users** → Explicitly notify me NOT to touch the description; users maintain these themselves.
 Reason: ClickUp API overwrites the entire description. Manual UI formatting (like `/header` blocks) will be lost when the API writes markdown.
+
+## Read Before You Write
+- Before adding code, read exports, immediate callers, shared utilities.
+- **"Looks orthogonal" is dangerous.** If unsure why code is structured a way, ask.
+- Understand the patterns in use before deviating from them.
 
 ## Scope Discipline
 - Do not add features, refactor, or "improve" beyond what was asked.
@@ -104,6 +132,52 @@ Before proposing optimizations or refactoring:
 3. **Example**: "Before I suggest refactoring this function, let me re-read it to ensure I understand the current behavior and constraints."
 
 **Rationale**: Prevents incorrect or context-blind optimization suggestions that ignore hidden constraints, performance requirements, or architectural decisions.
+
+## Test Intent, Not Just Behavior
+- Tests must encode **WHY** behavior matters, not just **WHAT** it does.
+- A test that can't fail when business logic changes is wrong.
+- Example: Don't just test `calculateDiscount()` returns correct value — test that the discount logic respects regional rules.
+
+## Checkpoint After Every Significant Step
+- Summarize what was done, what's verified, and what's left.
+- Don't continue from a state you can't describe back.
+- If you lose track, stop and restate the current goal and blockers.
+- This applies especially to multi-step refactors, migrations, or debugging sessions.
+
+## Fail Loud
+- **"Completed" is wrong if anything was skipped silently.**
+- **"Tests pass" is wrong if any were skipped.**
+- Default to **surfacing uncertainty**, not hiding it.
+- If you suspect an edge case, configuration, or test coverage issue, state it explicitly before closing.
+
+## Confidence-Driven Response Validation
+
+**Do not accept your own answers at face value. Validate before replying.**
+
+For any strategy, design, solution, or recommendation:
+
+1. **Assess confidence honestly** — Do I have 100% confidence in this answer?
+   - Not just "sounds reasonable" — factual certainty
+   - Not just "common practice" — tested against the actual context
+2. **If confidence < 100%** — Find and list the gaps:
+   - What edge cases could break this?
+   - What assumptions am I making?
+   - What could I be wrong about?
+   - What dependencies or constraints did I miss?
+3. **Iterate** — Address each gap and re-assess confidence
+   - Repeat until you reach 100% confidence OR explicitly state remaining uncertainty
+   - Never hide doubts behind confident-sounding language ("should", "likely", "probably")
+4. **Flag unresolved uncertainty** — If 100% confidence is unreachable, state clearly:
+   - "I have 85% confidence because X and Y are still unclear"
+   - "This solution works if [assumption], but if [assumption] is wrong, it breaks"
+
+**Red flags that indicate low confidence masquerading as certainty:**
+- "This should work..." → Why only "should"? What could go wrong?
+- "Generally speaking..." → Which cases are exceptions?
+- "It depends on..." → Then specify the conditions explicitly
+- "Most likely..." → What are the other likelihoods and their impacts?
+
+**Why this matters:** AI's default is to sound confident. This rule forces honesty about what I actually know vs. what I'm guessing at. Your decisions depend on accurate confidence, not performative certainty.
 
 ## Investigation & Agent Strategy
 

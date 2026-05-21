@@ -41,6 +41,24 @@ if ! grep -q 'PRECOMMIT_STATUS=PASS' "$TRANSCRIPT" 2>/dev/null; then
   exit 2
 fi
 
+# ── Layer 3: Did response validate confidence? ─────────────────────────────────
+
+# Extract last Claude message from transcript
+LAST_MESSAGE=$(jq -r '.content[-1].text // empty' "$TRANSCRIPT" 2>/dev/null | tail -c 2000)
+
+if [[ -n "$LAST_MESSAGE" ]]; then
+  # Check for confidence-related keywords
+  CONFIDENCE_MARKERS=$(echo "$LAST_MESSAGE" | grep -iE '(confident|uncertain|not sure|assume|if .* then|depends on|caveat|edge case|might|could break|unclear)' | wc -l)
+
+  # If changes were made but no explicit confidence markers, warn
+  if [[ $CONFIDENCE_MARKERS -eq 0 ]]; then
+    echo "⚠️  Code changes made but response lacks explicit confidence assessment." >&2
+    echo "Consider stating: confidence level, assumptions, edge cases, or uncertainties." >&2
+    echo "See: Confidence-Driven Response Validation in GLOBAL_RULES.md" >&2
+    exit 2
+  fi
+fi
+
 # ── All checks passed ─────────────────────────────────────────────────────────
 
 exit 0
