@@ -41,6 +41,21 @@ Rules:
 - No features beyond what was asked. No abstractions for single-use code.
 - Test: would a senior engineer say this is overcomplicated? If yes, simplify.
 
+## Use the Model Only for Judgment Calls
+
+**Use me for:** classification, drafting, summarization, extraction, trade-off analysis
+**Do NOT use me for:** routing, retries, deterministic transforms, logic that code can handle
+
+**The principle:** If code can answer the question, code answers. I'm for judgment calls where human taste, context, or tradeoffs matter.
+
+**Examples:**
+- ✅ "Should we use Redux or Context API?" (judgment)
+- ❌ "Sort this array" (code can do it)
+- ✅ "Is this error message clear?" (judgment)
+- ❌ "Retry this network request" (code should handle it)
+
+**Why this matters:** Over-delegating to AI creates dependencies where code could be deterministic and faster.
+
 ## Surgical Changes
 - Touch only what you must. Clean up only your own mess.
 - Don't "improve" adjacent code, comments, or formatting.
@@ -65,10 +80,37 @@ Rules:
 - **Cards manually formatted by users** → Explicitly notify me NOT to touch the description; users maintain these themselves.
 Reason: ClickUp API overwrites the entire description. Manual UI formatting (like `/header` blocks) will be lost when the API writes markdown.
 
+## Surface Conflicts, Don't Average Them
+
+When two patterns or approaches contradict:
+1. **Pick one** — Choose based on: more recent commit, more tested approach, explicit project preference
+2. **Explain why** — State which pattern you chose and why
+3. **Flag the other for cleanup** — Mark the superseded pattern for future refactoring
+4. **Don't blend** — Never mix conflicting patterns to "hedge" or "balance"
+
+**Why this matters:** Blended patterns create invisible complexity. Each line of code should follow a single coherent rule, not a compromise between two.
+
+**Example:** If you find both `const getUser = () => {...}` and `function getUser() {...}`, pick one convention and flag the inconsistency for cleanup. Don't mix them.
+
 ## Read Before You Write
 - Before adding code, read exports, immediate callers, shared utilities.
 - **"Looks orthogonal" is dangerous.** If unsure why code is structured a way, ask.
 - Understand the patterns in use before deviating from them.
+
+## Match the Codebase's Conventions
+
+Conform to existing style, even if you'd do it differently.
+
+**Why:** Consistency > personal taste inside a codebase. Your code will be maintained by others who expect predictability.
+
+**Exception:** If you genuinely believe a convention is harmful (security risk, readability nightmare), surface it explicitly. Don't fork silently by violating it.
+
+**Apply to:**
+- Variable naming (camelCase, snake_case, CONSTANT_CASE)
+- Comment style (JSDoc vs inline comments)
+- File organization (barrel exports vs flat imports)
+- Error handling patterns (exceptions vs error codes)
+- Test structure (AAA vs BDD format)
 
 ## Scope Discipline
 - Do not add features, refactor, or "improve" beyond what was asked.
