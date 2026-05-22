@@ -303,3 +303,114 @@ Proceed? Yes / No / Tell me more"
 3. **Team readiness** — Learning curve, implementation effort
 4. **Clear recommendation** — Which approach, with confidence level
 5. **Next steps** — Concrete implementation path
+
+## Commit Message Discipline
+
+Write commits that tell the **why**, not just the **what**.
+
+**Format:** One-line summary (≤50 chars) + blank line + body (wrapped at 72 chars)
+
+**Body should answer:**
+- Why this change was needed
+- What approach was chosen and why (if not obvious)
+- Any gotchas or side effects
+- Issue references or related commits
+
+**Examples:**
+- ✅ `feat: add timeout retry logic for flaky API calls (500ms × 3 attempts)`
+- ❌ `update code` (no context)
+- ✅ `fix: prevent race condition in session cache (sync lock added)`
+- ❌ `bugfix: session issue` (which issue? how fixed?)
+
+**Why:** Future-you and your team will `git blame` this commit. A vague message forces code archaeology; a clear message saves hours.
+
+## Secrets & Security Hygiene
+
+Never commit secrets, credentials, or API keys.
+
+**Before any commit:**
+1. **Scan for hardcoded secrets** — Search for strings like `api_key=`, `password:`, `secret`, `token`, `AUTH_`
+2. **Check `.gitignore`** — Verify `.env`, `*.local`, `creds/*` are ignored
+3. **No "remove secret" commits** — If you commit a secret, it's in history forever. Rotate it instead.
+4. **Scan dependencies** — `npm audit`, `composer audit` for known vulnerabilities
+
+**Local `.env` workflow:**
+- Create `.env.example` with placeholder values
+- Document required variables in README
+- Never commit actual `.env` file
+
+**Why:** Leaked secrets = instant compromise. Even "deleted" commits live in git history and may be cloned elsewhere.
+
+## Logging Standards
+
+Structured logging enables debugging without source dives.
+
+**Levels (use correctly):**
+- `debug` — Application flow details (variable values, function entry/exit)
+- `info` — Business events (user login, payment received, job started)
+- `warn` — Recoverable issues (retried request, deprecated API used)
+- `error` — Unrecoverable issues (connection failed, validation error)
+
+**Best practices:**
+- Include **context** — User ID, request ID, affected resource
+- Use **structured fields** — `{userId, action, duration}` not concatenated strings
+- Never log secrets — Strip API keys, passwords, tokens before logging
+- Include stack traces only on `error` level
+
+**Example (bad):** `logger.warn("request failed")`
+**Example (good):** `logger.warn({userId: 123, action: 'payment', attempt: 2, reason: 'timeout'})`
+
+**Why:** When production breaks, logs are your lifeline. Vague logs are worse than no logs.
+
+## Performance: Profile Before Optimizing
+
+Don't optimize blindly. Measure first.
+
+**Workflow:**
+1. **Define the problem** — "Load time > 2s" or "Memory > 500MB"
+2. **Profile/measure** — Use tools (Lighthouse, flame graphs, heap snapshots, APM)
+3. **Find the bottleneck** — 80% of slowness usually comes from 20% of code
+4. **Target only that** — Premature optimization elsewhere wastes time
+5. **Verify improvement** — Re-measure after change
+
+**Common traps:**
+- ❌ "This function looks slow" (guess, not measured)
+- ✅ "Profiler shows 60% time in database query" (measured)
+- ❌ "Let's use Redis" (optimization before diagnosis)
+- ✅ "Added caching — load time dropped 40%" (measured improvement)
+
+**Why:** Ninety percent of optimizations target the wrong code. Measurement keeps you honest.
+
+## Documentation Standards
+
+Document only **why**, not **what**.
+
+**What to document:**
+- **Hidden constraints** — "This queue must process < 100ms or downstream fails"
+- **Non-obvious decisions** — "Why Postgres, not SQLite? (volume at scale, ACID on failover)"
+- **Gotchas** — "Update queries must check `updated_at` or race conditions occur"
+- **Architecture** — Data flow, component responsibilities, extension points
+
+**What NOT to document:**
+- **Function signatures** — Type annotations say what a function does
+- **Variable names** — `const elapsedMs` needs no explanation
+- **Control flow** — `for (const user of users)` is self-documenting
+- **Library usage** — Link to official docs instead of paraphrasing
+
+**Format:**
+- **Code comments** — One-liner, explain the WHY if non-obvious
+- **README** — Architecture, how to run, common pitfalls
+- **Decision logs** — Major choices and their rationale (store in git)
+
+**Example:**
+```javascript
+// ✅ Good comment — explains WHY
+// Reject before queueing to fail fast on bad input (DB validation is too late)
+if (!isValidEmail(email)) throw new Error(...)
+
+// ❌ Bad comment — just describes WHAT
+// Check if email is valid
+if (!isValidEmail(email)) throw new Error(...)
+```
+
+**Why:** Over-documentation rots. Under-documentation confuses. Document the **judgment calls**, not the syntax.
