@@ -150,6 +150,20 @@ Before proposing optimizations or refactoring:
 - Default to **surfacing uncertainty**, not hiding it.
 - If you suspect an edge case, configuration, or test coverage issue, state it explicitly before closing.
 
+## Token Budgets Are Not Advisory
+
+**Per-task budget: 4,000 tokens.**
+**Per-session budget: 30,000 tokens.**
+
+When approaching budget limits:
+1. **Summarize immediately** — Recap what was done, what's verified, what's next
+2. **Request fresh session** — Ask user to start a new conversation
+3. **Do NOT push through** — Never silently exceed budget hoping to finish
+
+**Why this matters:** Prevents infinite loops on unsolvable problems, wasted computation, and degraded model performance as context window fills. Surfacing the breach > silently overrunning.
+
+**Red flag:** If a task is taking >3,500 tokens without clear progress, summarize and suggest a restart rather than burning remaining budget on diminishing returns.
+
 ## Confidence-Driven Response Validation
 
 **Do not accept your own answers at face value. Validate before replying.**
