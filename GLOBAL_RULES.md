@@ -24,6 +24,31 @@ Before writing any code or making changes, follow this workflow:
 - **Stop when confused.** Name what's unclear instead of proceeding with a guess.
 - If the user's request could be solved three ways, surface all three with tradeoffs before picking one.
 
+## Pre-Implementation Grounding Protocol
+
+**Before writing ANY code, execute this protocol in order:**
+
+1. **Search for reference pattern** — Find 1-2 existing files with the same architectural structure (e.g., Service class, Hook, Vue component, Prisma model). Read them completely.
+   - Example: "For a new Service, I found `app/Services/ReplenishmentService.php` and `app/Services/ShippingService.php`"
+
+2. **State the pattern you are following** — Explicitly tell the user which file/pattern you are copying (name the reference file path).
+   - ✅ "I'm following the pattern from `composables/useInventory.ts`"
+   - ❌ "I'll use the standard approach"
+
+3. **Verify git readiness**
+   - Current branch is NOT main/master: `git rev-parse --abbrev-ref HEAD`
+   - Working tree is clean: `git status` (no uncommitted changes)
+   - For branch reviews: `git fetch origin` + `git checkout <branch>` latest version first
+
+4. **State your testing plan BEFORE touching implementation files**
+   - Which tests will you write or modify? (give specific file paths and test names)
+   - What are the failure scenarios you're testing? (e.g., "NULL design_id should be rejected")
+   - Wait for user confirmation before proceeding.
+
+5. **Only after confirmation: start implementation**
+
+**Why this matters:** Your usage data shows 16 "wrong_approach" errors traced to skipping pattern research, and 10 "buggy_code" incidents from missing test plans.
+
 ## Coding Standards — SOLID Principles
 Strictly enforce SOLID principles in all software development tasks:
 - **S** — Single Responsibility
@@ -118,6 +143,26 @@ Conform to existing style, even if you'd do it differently.
 - No error handling for impossible scenarios.
 - No abstractions for one-time use.
 
+## Testing Plan Handoff (Implementation Phase)
+
+**Immediately after grounding protocol, before any code edit:**
+
+1. **State the tests you will write/modify**
+   - File path: `tests/Unit/Services/ReplenishmentServiceTest.php`
+   - Test names: `test_tier_deletion_rejects_null_design_id`, `test_valid_factory_id_passes`
+
+2. **Describe failure scenarios**
+   - What SHOULD fail? "NULL `design_id` should trigger validation error"
+   - What SHOULD pass? "Valid factory_id + non-NULL design_id should succeed"
+
+3. **Get user confirmation** — User says "proceed" or "adjust the plan"
+
+4. **After implementation: prove tests pass**
+   - Run the tests: `yarn test:unit ReplenishmentServiceTest`
+   - Report result: "✅ 6 tests passed" or "❌ 2 tests failed (names)"
+
+**Why this matters:** Your tier deletion logic shipped with bugs on first attempt → second attempt passed. Pre-declared tests prevent silent failures.
+
 ## Branch Discipline
 - **Before any edits or commits**: Explicitly confirm you are on the correct branch (not `master` or `main`)
   - Use `git rev-parse --abbrev-ref HEAD` to verify
@@ -174,6 +219,27 @@ Before proposing optimizations or refactoring:
 3. **Example**: "Before I suggest refactoring this function, let me re-read it to ensure I understand the current behavior and constraints."
 
 **Rationale**: Prevents incorrect or context-blind optimization suggestions that ignore hidden constraints, performance requirements, or architectural decisions.
+
+## Screenshot & Data Verification Protocol
+
+**When debugging using screenshots or visual inspection:**
+
+1. **Vision Echo** — When reading values from a screenshot (e.g., `data_value`, `data_type`, SKU, factory_id, design_id):
+   - List every field you read in a table: `field_name | value_read`
+   - Ask user to confirm: "Is this correct?"
+   - Do NOT proceed to conclusions until user confirms
+
+2. **Never assume IDs or relationships** — Before proposing a fix:
+   - Run a SQL query to verify `factory_id`, `design_id`, relationships
+   - Check for NULL values in expected columns
+   - Example: "Let me verify the factory_id and design_id relationship before inserting test data"
+
+3. **Source of Truth is code, not screenshots**
+   - Prefer raw logs, SQL output, or code traces over screenshot interpretation
+   - If screenshot reading conflicts with database state, trust the database
+   - Example: "Screenshot shows `picking_employee_id: NULL`, which means the INNER JOIN will exclude this row"
+
+**Why this matters:** Your EAN13 barcode debugging required multiple screenshot re-reads. Your replenishment SKU debugging used wrong factory_id because it was assumed, not verified.
 
 ## Test Intent, Not Just Behavior
 - Tests must encode **WHY** behavior matters, not just **WHAT** it does.
