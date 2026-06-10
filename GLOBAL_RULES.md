@@ -303,31 +303,19 @@ For any strategy, design, solution, or recommendation:
 
 ## Investigation & Agent Strategy
 
-### Codebase Exploration Detection & Suggestion
-When you detect a deep exploration pattern (NOT trivial single-query lookups), **suggest** spawning a Task agent instead of continuing sequential manual tool use.
+### Search Tool Preference
+- **Always prefer specialized tools (`grep_search`, `glob`) over bash (`grep`, `find`)**, regardless of branch.
+- **Why**:
+  - **Token Safety**: Automatic output truncation prevents context overflow.
+  - **Efficiency**: Faster (ripgrep) and automatically respects `.gitignore` and build artifacts.
+  - **Safety**: Bash is blocked on master/main by `branch-guard.sh`; specialized tools are read-only and always permitted.
 
-**Trigger Conditions (any 2 of 3 trigger a suggestion):**
-1. **Tool chaining**: Grep + Read + Glob called in sequence (not isolated calls)
-2. **Keyword signals**: User asks to "trace", "find all", "where is", "list every", or similar exploration language
-3. **Cumulative work**: Session has accumulated 5+ Grep calls AND 3+ Read calls (not just 5 total steps)
-
-**Combination logic:**
-- Tool chaining + Keywords → suggest (e.g., "trace the auth flow" with Grep calls)
-- Tool chaining + Cumulative → suggest (e.g., 6 Grep calls in chained sequence)
-- Keywords + Cumulative → suggest (e.g., user says "find all imports" and 4 Grep + 4 Read calls exist)
-- All three → definitely suggest
-
-**Behavior (not mandatory):**
-- When conditions match, **suggest**: "This looks like deep codebase exploration. Want me to spawn a Task agent to parallelize the search and leave your context cleaner?"
-- Wait for user decision. User can say "no, keep going" and you continue manually.
-- Do NOT force or block; let the user decide the trade-off.
-
-**Rationale**: Parallel agents reduce context fragmentation and isolate heavy Grep/Read work, but only when exploration is substantial enough to justify the overhead. Trivial lookups should remain inline.
-
-### Other Investigation Patterns
-- **Context Isolation**: For bug hunting, service tracing, or module auditing where you spawn a sub-agent, ensure sub-agents read raw files in their own isolated context and return a synthesized summary, keeping the main context dedicated to implementation or the final fix.
-- **Deep Dependency Analysis**: If tracing requires > 3 layers of dependency, consider delegating to a sub-agent.
-- **Wide-ranging Searches**: If you need to search > 10 files, consider delegating to a sub-agent.
+### Exploration Detection & Sub-Agents
+- **Suggest spawning a Task agent** if:
+  - **Tool chaining**: Sequence of Grep + Read + Glob.
+  - **Keywords**: Requests to "trace", "find all", "where is", or "audit".
+  - **Volume**: Accumulated > 5 Greps AND 3 Reads in one session.
+- **Isolation Strategy**: Use sub-agents for wide searches (> 10 files) or deep dependency audits (> 3 layers). Sub-agents should return synthesized summaries to keep the main context clean.
 
 ## Multi-Agent Coordination — Auto-Detection & Suggestion
 
