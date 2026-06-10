@@ -20,9 +20,50 @@ if [[ -z "$TRANSCRIPT" ]] || [[ ! -f "$TRANSCRIPT" ]]; then
 fi
 
 # ── Layer 1: Were any code files changed? ─────────────────────────────────────
+#
+# Extract the file_path of every Edit/Write/MultiEdit tool call from the
+# transcript. Schema: each JSONL line with .type=="assistant" carries
+# .message.content[], whose tool_use items expose .name and .input.file_path.
 
-if ! grep -qE '"name"[[:space:]]*:[[:space:]]*"(Edit|Write|MultiEdit)"' "$TRANSCRIPT" 2>/dev/null; then
-  exit 0  # No code changes — allow stop
+EDITED_FILES=$(jq -r '
+  select(.type=="assistant")
+  | .message.content[]?
+  | select(.type=="tool_use" and (.name=="Edit" or .name=="Write" or .name=="MultiEdit"))
+  | .input.file_path // empty
+' "$TRANSCRIPT" 2>/dev/null)
+
+# No file changes at all — allow stop
+if [[ -z "$EDITED_FILES" ]]; then
+  exit 0
+fi
+
+# ── Skip 1: cwd repo is on master/main ────────────────────────────────────────
+#
+# branch-guard blocks commits on master/main, so /precommit can never lead to a
+# commit there — demanding it would only deadlock. Skip the requirement.
+
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+if [[ "$CURRENT_BRANCH" == "master" || "$CURRENT_BRANCH" == "main" ]]; then
+  exit 0
+fi
+
+# ── Skip 2: only documentation files were changed ─────────────────────────────
+#
+# Doc-only edits (*.md or anything under .claudedocs/) need no lint/build/test.
+# Require /precommit only if at least one NON-doc file was touched.
+
+NEEDS_PRECOMMIT=0
+while IFS= read -r f; do
+  [[ -z "$f" ]] && continue
+  if [[ "$f" == *.md || "$f" == */.claudedocs/* ]]; then
+    continue
+  fi
+  NEEDS_PRECOMMIT=1
+  break
+done <<< "$EDITED_FILES"
+
+if [[ "$NEEDS_PRECOMMIT" -eq 0 ]]; then
+  exit 0  # Documentation-only changes — allow stop
 fi
 
 # ── Layer 2a: Was /precommit run? ─────────────────────────────────────────────
