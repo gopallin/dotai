@@ -211,6 +211,32 @@ description: What the skill does
 
 ---
 
+### 8. Status Line (Claude Code only)
+
+**Location:** `~/dotai/statusline/claude/statusline.sh`
+
+**Purpose:** Always-on display of token usage so you can see "how much is left" at a glance.
+
+**Mechanism:**
+- Registered under the `statusLine` key in `~/.claude/settings.json` (NOT a hook — `statusLine` is a settings-only feature, so it cannot be declared in `plugin.json` / `hooks.json`).
+- Claude Code pipes a JSON blob to the command on stdin; the script parses it and prints one line.
+- Renders colored bar graphs (`█` used / `░` remaining): **purple normally, red when a bar exceeds 80%**.
+
+**Data source (stdin JSON):**
+- `.context_window.*` — context token usage; always present after the first API call.
+- `.rate_limits.*` — the data behind `/usage` (5-hour / 7-day plan limits); **Claude.ai Pro/Max only**, absent for API / managed accounts. The script degrades silently when absent.
+
+**Example output:**
+```
+Opus · ctx [███░░░░░] 86k/200k 43% · 5h [██░░░░░░] 24% · 7d [███░░░░░] 41%
+```
+
+**CLI parity:** Claude Code only for now. Codex / Gemini status lines use different formats and stdin schemas; their adapters would live under `statusline/codex/` and `statusline/gemini/` when added.
+
+**Distribution:** Copied to `~/.claude/statusline.sh` by `scripts/claude/install.sh`, which also registers the `statusLine` command in `settings.json` (idempotent).
+
+---
+
 ## Workflow: Adding a New Rule
 
 ### Step 1: Add to GLOBAL_RULES.md
@@ -375,6 +401,7 @@ Distribute via `install.sh` after committing.
 │ skills/git-push.md, preflight.md                │
 │ commands/plan.md, precommit.md                  │
 │ rules/vue.md, node.md, laravel.md               │
+│ statusline/claude/statusline.sh                 │
 └─────────────────────────────────────────────────┘
           │
           │ install.sh
@@ -388,6 +415,7 @@ Distribute via `install.sh` after committing.
   │ skills/          │           │ skills/          │   │ skills/     │
   │ commands/        │           │ (limited)        │   │ (limited)   │
   │ rules/           │           │                  │   │             │
+  │ statusline.sh    │           │                  │   │             │
   └──────────────────┘           └──────────────────┘   └─────────────┘
 ```
 
