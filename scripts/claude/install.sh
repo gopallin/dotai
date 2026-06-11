@@ -78,6 +78,12 @@ cp "$DOTAI_DIR/hooks/shared/branch-guard.sh" "$CLAUDE_DIR/hooks/shared/branch-gu
 chmod +x "$CLAUDE_DIR/hooks/shared/branch-guard.sh"
 echo "✅ shared/branch-guard.sh     → $CLAUDE_DIR/hooks/shared/branch-guard.sh"
 
+# ── 3b. Status line (Claude Code only) ────────────────────────────────────────
+
+cp "$DOTAI_DIR/statusline/claude/statusline.sh" "$CLAUDE_DIR/statusline.sh"
+chmod +x "$CLAUDE_DIR/statusline.sh"
+echo "✅ statusline.sh      → $CLAUDE_DIR/statusline.sh"
+
 # ── 4. Register hooks in settings.json ────────────────────────────────────────
 
 SETTINGS="$CLAUDE_DIR/settings.json"
@@ -128,7 +134,13 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
     }
   ] + (.hooks.PreToolUse // [] | map(select(
     (.hooks[0].command | test("shared/(complexity|branch)-guard\\.sh$")) | not
-  ))))
+  )))) |
+  # Register status line (Claude Code only) — dotai owns this key
+  .statusLine = {
+    "type": "command",
+    "command": "bash \($home)/.claude/statusline.sh",
+    "padding": 0
+  }
 ')
 
 echo "$UPDATED" > "$SETTINGS"
@@ -153,5 +165,6 @@ echo "  /precommit       run lint + build + test"
 echo "  stop-guard       auto-blocks stopping if /precommit was skipped or failed"
 echo "  complexity-guard alerts on manual exploration loops"
 echo "  branch-guard     prevents accidental pushes to master/main"
+echo "  statusline       model · context-usage bar · /usage rate-limit bars"
 echo "  rules/           laravel.md · vue.md · node.md (path-filtered)"
 echo "  skills/          git-push (auto-detect GitLab/GitHub + Keychain auth)"
