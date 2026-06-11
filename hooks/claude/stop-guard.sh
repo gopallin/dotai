@@ -37,6 +37,24 @@ if [[ -z "$EDITED_FILES" ]]; then
   exit 0
 fi
 
+# ── Layer 1b: Reconcile transcript edits against the real working tree ─────────
+#
+# EDITED_FILES is only a proxy: it counts ANY Edit/Write/MultiEdit tool_use,
+# regardless of whether the file lives inside the repo or still exists. A
+# scratch script written to /tmp (or a temp file created then removed within
+# the session) leaves a tool_use in the transcript but no committable change.
+# Ground the decision in `git status`: if the working tree is clean, there is
+# nothing to precommit — allow stop.
+
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+if [[ -z "$REPO_ROOT" ]]; then
+  exit 0  # Not inside a git repo — nothing to precommit
+fi
+
+if [[ -z "$(git status --porcelain 2>/dev/null)" ]]; then
+  exit 0  # Working tree clean — transcript edits were out-of-repo/scratch
+fi
+
 # ── Skip 1: cwd repo is on master/main ────────────────────────────────────────
 #
 # branch-guard blocks commits on master/main, so /precommit can never lead to a
