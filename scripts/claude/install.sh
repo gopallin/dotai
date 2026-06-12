@@ -68,6 +68,19 @@ cp "$DOTAI_DIR/hooks/gemini/stop-guard.sh" "$CLAUDE_DIR/hooks/gemini/stop-guard.
 chmod +x "$CLAUDE_DIR/hooks/gemini/stop-guard.sh"
 echo "✅ gemini/stop-guard.sh     → $CLAUDE_DIR/hooks/gemini/stop-guard.sh"
 
+# grounding-guard (front-of-work gate; Claude blocks, codex/gemini advisory)
+cp "$DOTAI_DIR/hooks/claude/grounding-guard.sh" "$CLAUDE_DIR/hooks/claude/grounding-guard.sh"
+chmod +x "$CLAUDE_DIR/hooks/claude/grounding-guard.sh"
+echo "✅ claude/grounding-guard.sh → $CLAUDE_DIR/hooks/claude/grounding-guard.sh"
+
+cp "$DOTAI_DIR/hooks/codex/grounding-guard.sh" "$CLAUDE_DIR/hooks/codex/grounding-guard.sh"
+chmod +x "$CLAUDE_DIR/hooks/codex/grounding-guard.sh"
+echo "✅ codex/grounding-guard.sh  → $CLAUDE_DIR/hooks/codex/grounding-guard.sh"
+
+cp "$DOTAI_DIR/hooks/gemini/grounding-guard.sh" "$CLAUDE_DIR/hooks/gemini/grounding-guard.sh"
+chmod +x "$CLAUDE_DIR/hooks/gemini/grounding-guard.sh"
+echo "✅ gemini/grounding-guard.sh → $CLAUDE_DIR/hooks/gemini/grounding-guard.sh"
+
 # Shared hooks
 mkdir -p "$CLAUDE_DIR/hooks/shared"
 cp "$DOTAI_DIR/hooks/shared/complexity-guard.sh" "$CLAUDE_DIR/hooks/shared/complexity-guard.sh"
@@ -131,9 +144,19 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
           "timeout": 5
         }
       ]
+    },
+    {
+      "matcher": "Edit|Write|MultiEdit",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash \($home)/.claude/hooks/claude/grounding-guard.sh",
+          "timeout": 10
+        }
+      ]
     }
   ] + (.hooks.PreToolUse // [] | map(select(
-    (.hooks[0].command | test("shared/(complexity|branch)-guard\\.sh$")) | not
+    (.hooks[0].command | test("shared/(complexity|branch)-guard\\.sh$|claude/grounding-guard\\.sh$")) | not
   )))) |
   # Register status line (Claude Code only) — dotai owns this key
   .statusLine = {
@@ -162,7 +185,9 @@ echo ""
 echo "Available after restart:"
 echo "  /plan            structured design planning (user chooses to save to plan.md or ClickUp)"
 echo "  /precommit       run lint + build + test"
+echo "  /ground          pre-implementation grounding check (read patterns + verify data)"
 echo "  stop-guard       auto-blocks stopping if /precommit was skipped or failed"
+echo "  grounding-guard  auto-blocks the first code edit until /ground passes"
 echo "  complexity-guard alerts on manual exploration loops"
 echo "  branch-guard     prevents accidental pushes to master/main"
 echo "  statusline       model · context-usage bar · /usage rate-limit bars"

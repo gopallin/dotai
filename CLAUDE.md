@@ -139,17 +139,22 @@ Ran but FAIL? Still cannot stop.
 │   ├── precommit.md            ← /precommit slash command
 │   └── plan.md                 ← /plan design planning command
 ├── skills/
-│   └── git-push.md             ← automatic GitLab/GitHub push
+│   ├── git-push.md             ← automatic GitLab/GitHub push
+│   └── ground.md               ← /ground pre-implementation grounding check
 ├── hooks/
 │   ├── hooks.json              ← hook event declarations
 │   ├── claude/
-│   │   └── stop-guard.sh       ← Claude Code Stop event hook
+│   │   ├── stop-guard.sh       ← Claude Code Stop event hook
+│   │   └── grounding-guard.sh  ← Claude PreToolUse hook (blocks first un-grounded edit)
 │   ├── codex/
-│   │   └── stop-guard.sh       ← Codex CLI Stop event hook
+│   │   ├── stop-guard.sh       ← Codex CLI Stop event hook
+│   │   └── grounding-guard.sh  ← Codex grounding hook (advisory)
 │   ├── gemini/
-│   │   └── stop-guard.sh       ← Gemini CLI Stop event hook
+│   │   ├── stop-guard.sh       ← Gemini CLI Stop event hook
+│   │   └── grounding-guard.sh  ← Gemini grounding hook (advisory)
 │   └── shared/
-│       └── complexity-guard.sh ← shared PreToolUse hook (all CLIs)
+│       ├── complexity-guard.sh ← shared PreToolUse hook (all CLIs)
+│       └── branch-guard.sh     ← blocks edits/commits on master/main
 └── rules/
     ├── laravel.md              ← Laravel-specific guidelines
     ├── vue.md                  ← Vue.js-specific guidelines
@@ -199,8 +204,12 @@ Tech stack detection logic for `/precommit`:
 2. **Enforce with code, not prompts** — quality gates use hooks, not CLAUDE.md rules
 3. **Complement official skills** — dotai's role is to fill gaps; the complete workflow is:
    ```
-   /feature-dev → implement → /precommit → (stop-guard auto-enforces) → git commit
+   /feature-dev → /ground → (grounding-guard auto-enforces) → implement
+                → /precommit → (stop-guard auto-enforces) → git commit
    ```
+   `grounding-guard` is the front-of-work mirror of `stop-guard`: it blocks the
+   first non-doc code edit of a session until `/ground` emits `GROUNDING_STATUS=PASS`
+   (verifies existing patterns + data/IDs before writing). See `plan-grounding-guard.md`.
 4. **Extensible** — adapters for Gemini CLI and other tools can be added later, sharing the same core `commands/` and `hooks/` logic
 
 ---
