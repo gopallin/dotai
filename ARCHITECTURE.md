@@ -224,11 +224,13 @@ description: What the skill does
 
 **Data source (stdin JSON):**
 - `.context_window.*` — context token usage; always present after the first API call.
-- `.rate_limits.*` — the data behind `/usage` (5-hour / 7-day plan limits); **Claude.ai Pro/Max only**, absent for API / managed accounts. The script degrades silently when absent.
+- `.rate_limits.*` — the data behind `/usage` (5-hour / 7-day plan limits, plus each window's `resets_at` epoch); **Claude.ai Pro/Max only**, absent for API / managed accounts. The script degrades silently when absent.
+
+Reset times (`↺`) are rendered in local time (= `/usage`'s timezone): the 5-hour window shows time only, the 7-day window shows date + time; minutes appear only when not on the hour.
 
 **Example output:**
 ```
-Opus · ctx [███░░░░░] 86k/200k 43% · 5h [██░░░░░░] 24% · 7d [███░░░░░] 41%
+Opus · ctx [███░░░░░] 86k/200k 43% · 5h [██░░░░░░] 24% ↺2pm · 7d [███░░░░░] 41% ↺Jun 14 1pm
 ```
 
 **CLI parity:** Claude Code only for now. Codex / Gemini status lines use different formats and stdin schemas; their adapters would live under `statusline/codex/` and `statusline/gemini/` when added.
