@@ -14,6 +14,30 @@ set -euo pipefail
 DOTAI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$DOTAI_DIR/scripts"
 
+# The command that proves each CLI is installed (same `command -v` check the
+# sub-installers use for jq). PATH must expose the CLI — e.g. run from a shell
+# where the CLI is on PATH (nvm/global npm bin), not a bare non-login shell.
+cli_binary() {
+  case "$1" in
+    claude) echo "claude" ;;
+    codex)  echo "codex" ;;
+    gemini) echo "gemini" ;;
+  esac
+}
+
+# Run a CLI's installer only if that CLI is on PATH.
+# Returns 0 if it ran, 10 if skipped (CLI not installed).
+run_installer() {
+  local name="$1" bin
+  bin="$(cli_binary "$name")"
+  if ! command -v "$bin" >/dev/null 2>&1; then
+    echo "⏭️  Skipping ${name}: '${bin}' CLI not found in PATH — nothing installed for it."
+    return 10
+  fi
+  echo "Installing dotai for ${name}..."
+  bash "$SCRIPTS_DIR/${name}/install.sh"
+}
+
 # Determine which installer to run
 if [ $# -eq 0 ]; then
   # Interactive mode: show menu
@@ -46,23 +70,36 @@ else
 fi
 
 case "$CHOICE" in
-  claude)
-    echo "Installing dotai for Claude Code..."
-    bash "$SCRIPTS_DIR/claude/install.sh"
-    ;;
-  codex)
-    echo "Installing dotai for Codex CLI..."
-    bash "$SCRIPTS_DIR/codex/install.sh"
-    ;;
-  gemini)
-    echo "Installing dotai for Gemini CLI..."
-    bash "$SCRIPTS_DIR/gemini/install.sh"
+  claude|codex|gemini)
+    rc=0
+    run_installer "$CHOICE" || rc=$?
+    if [ "$rc" -eq 10 ]; then
+      echo "Install the CLI first, then re-run: bash install.sh ${CHOICE}"
+      exit 1
+    fi
+    exit "$rc"   # 0, or the sub-installer's own failure code
     ;;
   all)
-    echo "Installing dotai for all CLIs..."
-    bash "$SCRIPTS_DIR/claude/install.sh"
-    bash "$SCRIPTS_DIR/codex/install.sh"
-    bash "$SCRIPTS_DIR/gemini/install.sh"
+    echo "Installing dotai for all installed CLIs..."
+    ran=0
+    failed=0
+    for name in claude codex gemini; do
+      rc=0
+      run_installer "$name" || rc=$?
+      if [ "$rc" -eq 0 ]; then
+        ran=$((ran + 1))
+      elif [ "$rc" -ne 10 ]; then
+        failed=$((failed + 1))   # installed but its installer errored
+      fi
+    done
+    if [ "$ran" -eq 0 ] && [ "$failed" -eq 0 ]; then
+      echo "❌ No supported CLI (claude/codex/gemini) found in PATH. Nothing installed."
+      exit 1
+    fi
+    if [ "$failed" -gt 0 ]; then
+      exit 1   # at least one installed CLI's installer errored
+    fi
+    exit 0
     ;;
   *)
     echo "Usage: bash install.sh [claude|codex|gemini|all]"
