@@ -38,6 +38,13 @@ echo "✅ /precommit command → $CLAUDE_DIR/commands/precommit.md"
 cp "$DOTAI_DIR/commands/plan.md" "$CLAUDE_DIR/commands/plan.md"
 echo "✅ /plan command      → $CLAUDE_DIR/commands/plan.md"
 
+cp "$DOTAI_DIR/commands/prompt.md" "$CLAUDE_DIR/commands/prompt.md"
+echo "✅ /prompt command    → $CLAUDE_DIR/commands/prompt.md"
+
+cp "$DOTAI_DIR/commands/prompt-template.sh" "$CLAUDE_DIR/commands/prompt-template.sh"
+chmod +x "$CLAUDE_DIR/commands/prompt-template.sh"
+echo "✅ /prompt template   → $CLAUDE_DIR/commands/prompt-template.sh"
+
 # ── 2b. Skills ────────────────────────────────────────────────────────────────
 
 mkdir -p "$CLAUDE_DIR/skills"
@@ -80,6 +87,16 @@ echo "✅ codex/grounding-guard.sh  → $CLAUDE_DIR/hooks/codex/grounding-guard.
 cp "$DOTAI_DIR/hooks/gemini/grounding-guard.sh" "$CLAUDE_DIR/hooks/gemini/grounding-guard.sh"
 chmod +x "$CLAUDE_DIR/hooks/gemini/grounding-guard.sh"
 echo "✅ gemini/grounding-guard.sh → $CLAUDE_DIR/hooks/gemini/grounding-guard.sh"
+
+# read-dedup-guard (blocks full re-reads of files already in context)
+cp "$DOTAI_DIR/hooks/claude/read-dedup-guard.sh" "$CLAUDE_DIR/hooks/claude/read-dedup-guard.sh"
+chmod +x "$CLAUDE_DIR/hooks/claude/read-dedup-guard.sh"
+echo "✅ claude/read-dedup-guard.sh → $CLAUDE_DIR/hooks/claude/read-dedup-guard.sh"
+
+# context-budget-guard (advisory: reminds to /clear when the session grows large)
+cp "$DOTAI_DIR/hooks/claude/context-budget-guard.sh" "$CLAUDE_DIR/hooks/claude/context-budget-guard.sh"
+chmod +x "$CLAUDE_DIR/hooks/claude/context-budget-guard.sh"
+echo "✅ claude/context-budget-guard.sh → $CLAUDE_DIR/hooks/claude/context-budget-guard.sh"
 
 # Shared hooks
 mkdir -p "$CLAUDE_DIR/hooks/shared"
@@ -154,9 +171,29 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
           "timeout": 10
         }
       ]
+    },
+    {
+      "matcher": "Read",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash \($home)/.claude/hooks/claude/read-dedup-guard.sh",
+          "timeout": 10
+        }
+      ]
+    },
+    {
+      "matcher": "Bash|Edit|Write|MultiEdit|Read|Grep|Glob",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash \($home)/.claude/hooks/claude/context-budget-guard.sh",
+          "timeout": 5
+        }
+      ]
     }
   ] + (.hooks.PreToolUse // [] | map(select(
-    (.hooks[0].command | test("shared/(complexity|branch)-guard\\.sh$|claude/grounding-guard\\.sh$")) | not
+    (.hooks[0].command | test("shared/(complexity|branch)-guard\\.sh$|claude/(grounding|read-dedup|context-budget)-guard\\.sh$")) | not
   )))) |
   # Register status line (Claude Code only) — dotai owns this key
   .statusLine = {
@@ -189,6 +226,8 @@ echo "  /ground          pre-implementation grounding check (read patterns + ver
 echo "  stop-guard       auto-blocks stopping if /precommit was skipped or failed"
 echo "  grounding-guard  auto-blocks the first code edit until /ground passes"
 echo "  complexity-guard alerts on manual exploration loops"
+echo "  read-dedup-guard blocks full re-reads of files already in context"
+echo "  context-budget-guard reminds you to /clear when the session grows large"
 echo "  branch-guard     prevents accidental pushes to master/main"
 echo "  statusline       model · context-usage bar · /usage rate-limit bars"
 echo "  rules/           laravel.md · vue.md · node.md (path-filtered)"

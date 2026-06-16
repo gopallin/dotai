@@ -140,7 +140,10 @@ Triggered **before** any tool (Bash, Read, API) executes.
 
 **Examples:**
 - `branch-guard.sh` — Blocks bash on master/main
+- `grounding-guard.sh` — Blocks the first un-grounded code edit until `/ground` passes
 - `complexity-guard.sh` — Alerts on manual exploration loops
+- `read-dedup-guard.sh` — **Blocks** a full re-read of a file already in context this session and unchanged since (escape hatch: pass `offset`/`limit`, or Edit the file first). Cuts redundant `cache_read` tokens.
+- `context-budget-guard.sh` — **Advisory** only: reminds you to `/clear` or split the task once the session transcript grows past size bands (long sessions re-send their whole context every turn).
 
 **Registration:** `~/.claude/settings.json`
 ```json
@@ -148,11 +151,16 @@ Triggered **before** any tool (Bash, Read, API) executes.
   "hooks": {
     "PreToolUse": [
       "~/.claude/hooks/shared/branch-guard.sh",
-      "~/.claude/hooks/shared/complexity-guard.sh"
+      "~/.claude/hooks/shared/complexity-guard.sh",
+      "~/.claude/hooks/claude/grounding-guard.sh",
+      "~/.claude/hooks/claude/read-dedup-guard.sh",
+      "~/.claude/hooks/claude/context-budget-guard.sh"
     ]
   }
 }
 ```
+
+**Token-efficiency hooks (`read-dedup-guard`, `context-budget-guard`):** added to attack the dominant token cost surfaced by usage analysis — ~96% of tokens are `cache_read` (context re-sent every turn), driven by monster sessions and redundant full-file reads (1,236 across 40% of sessions). They are the runtime enforcement counterpart to trimming `GLOBAL_RULES.md`.
 
 #### CLI-Specific Hooks
 

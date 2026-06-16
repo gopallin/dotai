@@ -145,7 +145,9 @@ Ran but FAIL? Still cannot stop.
 │   ├── hooks.json              ← hook event declarations
 │   ├── claude/
 │   │   ├── stop-guard.sh       ← Claude Code Stop event hook
-│   │   └── grounding-guard.sh  ← Claude PreToolUse hook (blocks first un-grounded edit)
+│   │   ├── grounding-guard.sh  ← Claude PreToolUse hook (blocks first un-grounded edit)
+│   │   ├── read-dedup-guard.sh ← Claude PreToolUse hook (blocks full re-reads of files already in context)
+│   │   └── context-budget-guard.sh ← Claude PreToolUse hook (advisory: reminds to /clear when session grows large)
 │   ├── codex/
 │   │   ├── stop-guard.sh       ← Codex CLI Stop event hook
 │   │   └── grounding-guard.sh  ← Codex grounding hook (advisory)
