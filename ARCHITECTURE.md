@@ -168,6 +168,28 @@ Triggered **before** any tool (Bash, Read, API) executes.
 - **codex/stop-guard.sh** — Similar for Codex CLI
 - **gemini/stop-guard.sh** — Similar for Gemini CLI
 
+#### Token-Efficiency Hooks: Cross-CLI Portability
+
+The two token-efficiency hooks port unevenly because the deciding factor is each
+CLI's pre-tool event coverage, not its data format (all three pass the same stdin
+JSON: `session_id`, `transcript_path`, `tool_name`, `tool_input`).
+
+| Hook | Claude Code | Codex CLI | Gemini CLI |
+|---|---|---|---|
+| `context-budget-guard` (advisory) | PreToolUse (broad) | PreToolUse/`Bash` only¹ | AfterAgent (`*`) |
+| `read-dedup-guard` (blocks reads) | PreToolUse/`Read` ✅ | **Not possible**² | BeforeTool/`read_file` ⚠️ experimental³ |
+
+1. Codex `PreToolUse` fires only for Bash / apply_patch / MCP, so the advisory
+   only re-checks on shell-tool turns.
+2. Codex `PreToolUse` does not intercept built-in file reads at all — there is no
+   event to deny and no file path delivered, so `read-dedup-guard` cannot exist on
+   Codex in any form (source: developers.openai.com/codex/hooks).
+3. Gemini `BeforeTool` can deny (exit 2 / `decision:"deny"`) and matches tool
+   names by regex, but it is **unverified** that it fires for the built-in
+   `read_file` tool — confirm empirically before relying on the block. The Gemini
+   port also tracks already-read paths in a per-session marker file instead of
+   parsing the transcript, whose format Gemini documents as unstable.
+
 ---
 
 ### 5. Skills Directory

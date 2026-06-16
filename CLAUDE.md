@@ -150,10 +150,13 @@ Ran but FAIL? Still cannot stop.
 │   │   └── context-budget-guard.sh ← Claude PreToolUse hook (advisory: reminds to /clear when session grows large)
 │   ├── codex/
 │   │   ├── stop-guard.sh       ← Codex CLI Stop event hook
-│   │   └── grounding-guard.sh  ← Codex grounding hook (advisory)
+│   │   ├── grounding-guard.sh  ← Codex grounding hook (advisory)
+│   │   └── context-budget-guard.sh ← Codex advisory (reminds to start fresh; PreToolUse/Bash only)
 │   ├── gemini/
 │   │   ├── stop-guard.sh       ← Gemini CLI Stop event hook
-│   │   └── grounding-guard.sh  ← Gemini grounding hook (advisory)
+│   │   ├── grounding-guard.sh  ← Gemini grounding hook (advisory)
+│   │   ├── context-budget-guard.sh ← Gemini advisory (reminds to start fresh; AfterAgent)
+│   │   └── read-dedup-guard.sh ← Gemini block via BeforeTool/read_file (EXPERIMENTAL — needs verification)
 │   └── shared/
 │       ├── complexity-guard.sh ← shared PreToolUse hook (all CLIs)
 │       └── branch-guard.sh     ← blocks edits/commits on master/main
