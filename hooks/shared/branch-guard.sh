@@ -22,17 +22,32 @@ CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
 # Allow all branches except master/main
 if [ "$CURRENT_BRANCH" = "master" ] || [ "$CURRENT_BRANCH" = "main" ]; then
     # --- Resolve the tool input (Bash command and/or Edit/Write file_path) ---
+    #
+    # Claude Code delivers the PreToolUse payload as JSON on stdin; older/other
+    # CLIs may set the legacy CLAUDE_TOOL_INPUT env var instead. Read stdin FIRST
+    # (the authoritative source) and fall back to the env var only when stdin is
+    # empty. Parse `.tool_input // .` so we tolerate both the full event shape
+    # ({tool_input:{...}}) and a bare tool_input object. This parse MUST succeed
+    # or the safe-command whitelist below cannot fire — which previously trapped
+    # the agent on master (even `git checkout`, the documented escape, blocked)
+    # because the old code read $CLAUDE_TOOL_INPUT (often the full event) and ran
+    # `jq '.command'` against it, always yielding empty.
     EXECUTING_CMD=""
     FILE_PATH=""
     if command -v jq >/dev/null 2>&1; then
-        RAW_INPUT="$CLAUDE_TOOL_INPUT"
-        if [ -z "$RAW_INPUT" ]; then
-            STDIN_JSON=$(cat 2>/dev/null)
-            RAW_INPUT=$(echo "$STDIN_JSON" | jq -c '.tool_input // empty' 2>/dev/null)
+        STDIN_JSON=$(cat 2>/dev/null)
+        TOOL_INPUT=""
+        if [ -n "$STDIN_JSON" ]; then
+            TOOL_INPUT=$(printf '%s' "$STDIN_JSON" | jq -c '.tool_input // .' 2>/dev/null)
         fi
-        if [ -n "$RAW_INPUT" ]; then
-            EXECUTING_CMD=$(echo "$RAW_INPUT" | jq -r '.command // empty' 2>/dev/null)
-            FILE_PATH=$(echo "$RAW_INPUT" | jq -r '.file_path // empty' 2>/dev/null)
+        if [ -z "$TOOL_INPUT" ] || [ "$TOOL_INPUT" = "null" ]; then
+            if [ -n "$CLAUDE_TOOL_INPUT" ]; then
+                TOOL_INPUT=$(printf '%s' "$CLAUDE_TOOL_INPUT" | jq -c '.tool_input // .' 2>/dev/null)
+            fi
+        fi
+        if [ -n "$TOOL_INPUT" ] && [ "$TOOL_INPUT" != "null" ]; then
+            EXECUTING_CMD=$(printf '%s' "$TOOL_INPUT" | jq -r '.command // empty' 2>/dev/null)
+            FILE_PATH=$(printf '%s' "$TOOL_INPUT" | jq -r '.file_path // empty' 2>/dev/null)
         fi
     fi
 
@@ -46,6 +61,15 @@ if [ "$CURRENT_BRANCH" = "master" ] || [ "$CURRENT_BRANCH" = "main" ]; then
         if echo "$EXECUTING_CMD" | grep -qiE "$SAFE_COMMANDS" && ! echo "$EXECUTING_CMD" | grep -qE ">|>>"; then
             exit 0
         fi
+    else
+        # Could not determine the command (no stdin payload / parse failure).
+        # Fail OPEN rather than trap the agent on master: this hook only matches
+        # the Bash tool, so the worst case is one non-git command slipping
+        # through, whereas failing closed blocks EVERY bash — including the
+        # `git checkout` needed to leave master. The commit/push protection then
+        # rests on the agent's own branch-discipline rules.
+        echo "⚠️  branch-guard: could not parse tool input; allowing (fail-open)." >&2
+        exit 0
     fi
 
     # --- Edit/Write/MultiEdit doc pass-through ---
