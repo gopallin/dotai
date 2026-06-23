@@ -46,10 +46,28 @@
 **Mechanism:**
 - Triggered by **PreToolUse** hook when Bash tool is about to execute
 - Checks current branch via `git rev-parse --abbrev-ref HEAD`
-- If on master/main: exits with code 2, blocks the Bash command
-- Otherwise: allows operation to proceed
+- If on master/main: applies the pass-through rules below, otherwise exits 2 to block
+- On any other branch: allows operation to proceed
 
 **Strategy:** Checks *current git branch* (reliable) rather than parsing bash command (unreliable in hook context).
+
+**Pass-through rules on master/main:**
+
+1. **Escape hatch — `git checkout` / `git switch` are ALWAYS allowed.** Without
+   this the agent is trapped: every bash is blocked, including the checkout
+   needed to leave master. The subcommand is detected with `awk` so it survives
+   redirects (`git checkout -b x 2>&1`) and global flags (`git -C <dir> checkout`)
+   — both of which previously slipped past the simple `^git checkout` anchor and
+   trapped the agent.
+2. **Other read-only commands** (`ls`, `grep`, `cat`, `git status`, `git log`,
+   `git diff`, …) are allowed **unless they redirect stdout to a file** — a real
+   write masquerading as a safe read. The guard regex `(^|[^0-9&])>>?($|[^&])`
+   blocks `> file` / `>> file` but passes stderr operations (`2>&1`,
+   `2>/dev/null`, `>&2`), which only move streams and write no data file.
+3. **Documentation edits** (`*.md`, `*/.claudedocs/*`) pass through Edit/Write.
+4. **Fail-open** when the tool input can't be parsed: this hook only matches the
+   Bash tool, so the worst case is one non-git command slipping through, whereas
+   failing closed would block the `git checkout` needed to escape master.
 
 **Testing:**
 ```bash
