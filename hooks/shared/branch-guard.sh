@@ -53,12 +53,27 @@ if [ "$CURRENT_BRANCH" = "master" ] || [ "$CURRENT_BRANCH" = "main" ]; then
 
     # --- Bash read-only pass-through ---
     # Whitelist of safe read-only commands.
-    # git checkout / git switch are allowed so the agent can escape master/main
-    # by creating a feature branch (otherwise it would be trapped: every bash,
-    # including the checkout needed to leave, gets blocked).
-    SAFE_COMMANDS="^ls|^grep|^cat|^find|^git status|^git log|^git diff|^git checkout|^git switch|^pwd|^du|^df|^stat|^file|^which|^type"
+    SAFE_COMMANDS="^ls|^grep|^cat|^find|^git status|^git log|^git diff|^pwd|^du|^df|^stat|^file|^which|^type"
     if [ -n "$EXECUTING_CMD" ]; then
-        if echo "$EXECUTING_CMD" | grep -qiE "$SAFE_COMMANDS" && ! echo "$EXECUTING_CMD" | grep -qE ">|>>"; then
+        # Escape hatch: `git checkout` / `git switch` must ALWAYS be allowed on
+        # master/main so the agent can leave (otherwise every bash is blocked,
+        # including the checkout needed to escape). Allow them UNCONDITIONALLY —
+        # ignoring redirects (`2>&1`) and global flags (`git -C <dir> checkout`),
+        # both of which previously trapped the agent. awk finds the real git
+        # subcommand by skipping global options and their arguments.
+        GIT_SUBCMD=$(printf '%s\n' "$EXECUTING_CMD" | awk '
+          { for(i=1;i<=NF;i++) if($i=="git"){ i++;
+              while(i<=NF){ t=$i;
+                if(t ~ /^-/){ if(t=="-C"||t=="-c"||t=="--git-dir"||t=="--work-tree"||t=="--namespace"||t=="--exec-path") i++; i++; continue }
+                print t; exit } } }')
+        case "$GIT_SUBCMD" in checkout|switch) exit 0 ;; esac
+
+        # Other read-only commands: allow unless they redirect stdout to a FILE
+        # (`> file` / `>> file` = a real write masquerading as a safe read).
+        # The regex matches a `>`/`>>` whose preceding char is neither a digit
+        # nor `&`, so stderr operations (`2>&1`, `2>/dev/null`, `>&2`) pass.
+        if echo "$EXECUTING_CMD" | grep -qiE "$SAFE_COMMANDS" \
+           && ! echo "$EXECUTING_CMD" | grep -qE '(^|[^0-9&])>>?($|[^&])'; then
             exit 0
         fi
     else
