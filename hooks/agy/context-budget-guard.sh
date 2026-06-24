@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
 #
-# context-budget-guard.sh (Gemini CLI adapter — ADVISORY ONLY)
+# context-budget-guard.sh (agy CLI adapter — ADVISORY ONLY)
 # Mirror of the Claude context-budget-guard: reminds you to start fresh or split
 # the task once the session transcript grows large. Long sessions re-send their
 # whole context every turn, which usage analysis showed is ~96% of token cost.
 #
-# Gemini contract: advisory on stderr, exit 0 (mirrors gemini/grounding-guard.sh).
+# agy contract: advisory on stderr, exit 0 (mirrors agy/grounding-guard.sh).
 # Registered on the AfterAgent event (matcher "*"), so it re-checks once per
 # agent turn — a natural rate limit, same role as Claude's Stop hook.
 #
 # CAVEAT: the session transcript format is not documented as stable
-# (github.com/google-gemini/gemini-cli docs/hooks). Verify against the installed
-# Gemini version before relying on it.
+# (antigravity.google/docs/hooks). Verify against the installed
+# agy version before relying on it.
 
 INPUT=$(cat)
 TRANSCRIPT=$(echo "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)
 SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)
-SESSION_ID="${SESSION_ID:-${GEMINI_SESSION_ID:-unknown}}"
+SESSION_ID="${SESSION_ID:-${AGY_SESSION_ID:-unknown}}"
 
 BAND_LINES=1500
 
@@ -25,7 +25,7 @@ if [[ -n "$TRANSCRIPT" ]] && [[ -f "$TRANSCRIPT" ]]; then
   if [[ "$LINES" =~ ^[0-9]+$ ]]; then
     BAND=$(( LINES / BAND_LINES ))
     if [[ "$BAND" -ge 1 ]]; then
-      MARKER="/tmp/dotai_ctxband_gemini_${SESSION_ID}"
+      MARKER="/tmp/dotai_ctxband_agy_${SESSION_ID}"
       LAST_BAND=$(cat "$MARKER" 2>/dev/null)
       [[ "$LAST_BAND" =~ ^[0-9]+$ ]] || LAST_BAND=0
       if [[ "$BAND" -gt "$LAST_BAND" ]]; then

@@ -118,7 +118,7 @@ Ran but FAIL? Still cannot stop.
 **File locations:** 
 - `hooks/claude/stop-guard.sh` (Claude Code)
 - `hooks/codex/stop-guard.sh` (Codex CLI)
-- `hooks/gemini/stop-guard.sh` (Gemini CLI)
+- `hooks/agy/stop-guard.sh` (Antigravity CLI)
 
 ---
 
@@ -133,8 +133,8 @@ Ran but FAIL? Still cannot stop.
 │   │   └── install.sh          ← Claude Code installer
 │   ├── codex/
 │   │   └── install.sh          ← Codex CLI installer
-│   └── gemini/
-│       └── install.sh          ← Gemini CLI installer
+│   └── agy/
+│       └── install.sh          ← Antigravity CLI installer
 ├── commands/
 │   ├── precommit.md            ← /precommit slash command
 │   └── plan.md                 ← /plan design planning command
@@ -152,11 +152,11 @@ Ran but FAIL? Still cannot stop.
 │   │   ├── stop-guard.sh       ← Codex CLI Stop event hook
 │   │   ├── grounding-guard.sh  ← Codex grounding hook (advisory)
 │   │   └── context-budget-guard.sh ← Codex advisory (reminds to start fresh; PreToolUse/Bash only)
-│   ├── gemini/
-│   │   ├── stop-guard.sh       ← Gemini CLI Stop event hook
-│   │   ├── grounding-guard.sh  ← Gemini grounding hook (advisory)
-│   │   ├── context-budget-guard.sh ← Gemini advisory (reminds to start fresh; AfterAgent)
-│   │   └── read-dedup-guard.sh ← Gemini block via BeforeTool/read_file (EXPERIMENTAL — needs verification)
+│   ├── agy/
+│   │   ├── stop-guard.sh       ← Antigravity CLI Stop event hook
+│   │   ├── grounding-guard.sh  ← Antigravity grounding hook (advisory)
+│   │   ├── context-budget-guard.sh ← Antigravity advisory (reminds to start fresh; AfterAgent)
+│   │   └── read-dedup-guard.sh ← Antigravity block via BeforeTool/read_file (EXPERIMENTAL — needs verification)
 │   └── shared/
 │       ├── complexity-guard.sh ← shared PreToolUse hook (all CLIs)
 │       └── branch-guard.sh     ← blocks edits/commits on master/main
@@ -175,8 +175,8 @@ bash install.sh
 # Codex CLI
 bash install.sh --codex
 
-# Gemini CLI
-bash install.sh --gemini
+# Antigravity CLI
+bash install.sh --agy
 
 # All CLIs
 bash install.sh --all
@@ -215,7 +215,7 @@ Tech stack detection logic for `/precommit`:
    `grounding-guard` is the front-of-work mirror of `stop-guard`: it blocks the
    first non-doc code edit of a session until `/ground` emits `GROUNDING_STATUS=PASS`
    (verifies existing patterns + data/IDs before writing). See `plan-grounding-guard.md`.
-4. **Extensible** — adapters for Gemini CLI and other tools can be added later, sharing the same core `commands/` and `hooks/` logic
+4. **Extensible** — adapters for Antigravity CLI (agy) and other tools can be added later, sharing the same core `commands/` and `hooks/` logic
 
 ---
 
@@ -236,7 +236,7 @@ Tech stack detection logic for `/precommit`:
 
 Claude Code now supports LSP for real-time code intelligence. This allows Claude to understand code structure, type definitions, and symbol relationships instead of relying on text search.
 
-*Note: Gemini CLI and Codex CLI do not yet have native LSP support. Future roadmap includes MCP-based LSP Bridge for those CLIs.*
+*Note: Antigravity CLI and Codex CLI do not yet have native LSP support. Future roadmap includes MCP-based LSP Bridge for those CLIs.*
 
 **Supported Languages:**
 - PHP/Laravel (via Intelephense)
@@ -271,7 +271,7 @@ echo 'export ENABLE_LSP_TOOL=1' >> ~/.zprofile
 - `stop-guard` hook checks LSP diagnostics to prevent merging broken code
 - Code review sessions benefit from accurate type context
 
-**Future: Gemini CLI & Codex CLI Support**
+**Future: Antigravity CLI & Codex CLI Support**
 - Waiting for native LSP or official MCP LSP Bridge support
 - Will implement via [Codex LSP Bridge](https://glama.ai/mcp/servers/CesarPetrescu/lsp-mcp) when ready
 
@@ -279,6 +279,6 @@ echo 'export ENABLE_LSP_TOOL=1' >> ~/.zprofile
 
 ## Future Scope (Out of Scope for Now)
 
-- Adapters for Gemini CLI and other AI CLIs
+- Adapters for Antigravity CLI and other AI CLIs
 - `/analyze-log` command (production issue diagnosis)
 - Support for additional tech stacks (Go, Python, etc.)

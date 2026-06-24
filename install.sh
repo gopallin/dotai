@@ -6,8 +6,8 @@
 #   bash install.sh              (interactive menu)
 #   bash install.sh claude       (Claude Code)
 #   bash install.sh codex        (Codex CLI)
-#   bash install.sh gemini       (Gemini CLI)
-#   bash install.sh all          (All three CLIs)
+#   bash install.sh agy          (Antigravity CLI)
+#   bash install.sh all          (All CLIs)
 
 set -euo pipefail
 
@@ -21,7 +21,7 @@ cli_binary() {
   case "$1" in
     claude) echo "claude" ;;
     codex)  echo "codex" ;;
-    gemini) echo "gemini" ;;
+    agy)    echo "agy" ;;
   esac
 }
 
@@ -48,15 +48,15 @@ if [ $# -eq 0 ]; then
   echo ""
   echo "1) Claude Code"
   echo "2) Codex CLI"
-  echo "3) Gemini CLI"
-  echo "4) All three CLIs"
+  echo "3) Antigravity CLI (agy)"
+  echo "4) All CLIs"
   echo ""
   read -p "Select [1-4]: " selection
 
   case "$selection" in
     1) CHOICE="claude" ;;
     2) CHOICE="codex" ;;
-    3) CHOICE="gemini" ;;
+    3) CHOICE="agy" ;;
     4) CHOICE="all" ;;
     *)
       echo "❌ Invalid selection. Please choose 1-4."
@@ -70,7 +70,7 @@ else
 fi
 
 case "$CHOICE" in
-  claude|codex|gemini)
+  claude|codex|agy)
     rc=0
     run_installer "$CHOICE" || rc=$?
     if [ "$rc" -eq 10 ]; then
@@ -83,7 +83,7 @@ case "$CHOICE" in
     echo "Installing dotai for all installed CLIs..."
     ran=0
     failed=0
-    for name in claude codex gemini; do
+    for name in claude codex agy; do
       rc=0
       run_installer "$name" || rc=$?
       if [ "$rc" -eq 0 ]; then
@@ -93,7 +93,7 @@ case "$CHOICE" in
       fi
     done
     if [ "$ran" -eq 0 ] && [ "$failed" -eq 0 ]; then
-      echo "❌ No supported CLI (claude/codex/gemini) found in PATH. Nothing installed."
+      echo "❌ No supported CLI (claude/codex/agy) found in PATH. Nothing installed."
       exit 1
     fi
     if [ "$failed" -gt 0 ]; then
@@ -102,7 +102,7 @@ case "$CHOICE" in
     exit 0
     ;;
   *)
-    echo "Usage: bash install.sh [claude|codex|gemini|all]"
+    echo "Usage: bash install.sh [claude|codex|agy|all]"
     echo ""
     echo "  Or run without arguments for interactive menu:"
     echo "  bash install.sh"
