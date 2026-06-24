@@ -2,7 +2,7 @@
 
 ## Overview
 
-**dotai** is a unified rules and automation distribution system for Claude Code and other AI CLIs (Codex, Gemini). It provides:
+**dotai** is a unified rules and automation distribution system for Claude Code and other AI CLIs (Codex, agy). It provides:
 
 1. **Centralized Rules Management** — Single source of truth for AI behavior (`GLOBAL_RULES.md`)
 2. **Branch Protection** — Prevents accidental edits/commits/pushes to main branches
@@ -33,7 +33,7 @@
 **Distribution:**
 - Copied to `~/.claude/CLAUDE.md` (Claude Code)
 - Copied to `~/.codex/AGENTS.md` (Codex CLI)
-- Copied to `~/.gemini/GEMINI.md` (Gemini CLI)
+- Copied to `~/.gemini/config/AGENTS.md` (Antigravity CLI)
 
 ---
 
@@ -110,7 +110,7 @@ dotai/ (source)
 │   ├── shared/branch-guard.sh
 │   ├── claude/stop-guard.sh
 │   ├── codex/stop-guard.sh
-│   └── gemini/stop-guard.sh
+│   └── agy/stop-guard.sh
 ├── skills/
 │   ├── git-push.md
 │   ├── preflight.md
@@ -136,12 +136,12 @@ dotai/ (source)
 ```
 1) Claude Code       → ~/.claude
 2) Codex CLI        → ~/.codex
-3) Gemini CLI       → ~/.gemini
-4) All three CLIs
+3) Antigravity CLI  → ~/.gemini (agy)
+4) All CLIs
 ```
 
 **Distribution Steps:**
-1. Copy GLOBAL_RULES.md → target CLAUDE.md / AGENTS.md / GEMINI.md
+1. Copy GLOBAL_RULES.md → target CLAUDE.md / AGENTS.md (in config/ for agy)
 2. Copy hooks/ → target hooks/
 3. Register hooks in settings.json / hooks.json
 4. Copy skills/ → target skills/
@@ -184,7 +184,7 @@ Triggered **before** any tool (Bash, Read, API) executes.
 
 - **claude/stop-guard.sh** — Blocks Claude Code stop if /precommit was skipped
 - **codex/stop-guard.sh** — Similar for Codex CLI
-- **gemini/stop-guard.sh** — Similar for Gemini CLI
+- **agy/stop-guard.sh** — Similar for Antigravity CLI (agy)
 
 #### Token-Efficiency Hooks: Cross-CLI Portability
 
@@ -192,7 +192,7 @@ The two token-efficiency hooks port unevenly because the deciding factor is each
 CLI's pre-tool event coverage, not its data format (all three pass the same stdin
 JSON: `session_id`, `transcript_path`, `tool_name`, `tool_input`).
 
-| Hook | Claude Code | Codex CLI | Gemini CLI |
+| Hook | Claude Code | Codex CLI | Antigravity CLI (agy) |
 |---|---|---|---|
 | `context-budget-guard` (advisory) | PreToolUse (broad) | PreToolUse/`Bash` only¹ | AfterAgent (`*`) |
 | `read-dedup-guard` (blocks reads) | PreToolUse/`Read` ✅ | **Not possible**² | BeforeTool/`read_file` ⚠️ experimental³ |
@@ -202,11 +202,11 @@ JSON: `session_id`, `transcript_path`, `tool_name`, `tool_input`).
 2. Codex `PreToolUse` does not intercept built-in file reads at all — there is no
    event to deny and no file path delivered, so `read-dedup-guard` cannot exist on
    Codex in any form (source: developers.openai.com/codex/hooks).
-3. Gemini `BeforeTool` can deny (exit 2 / `decision:"deny"`) and matches tool
+3. agy `BeforeTool` can deny (exit 2 / `decision:"deny"`) and matches tool
    names by regex, but it is **unverified** that it fires for the built-in
-   `read_file` tool — confirm empirically before relying on the block. The Gemini
+   `read_file` tool — confirm empirically before relying on the block. The agy
    port also tracks already-read paths in a per-session marker file instead of
-   parsing the transcript, whose format Gemini documents as unstable.
+   parsing the transcript, whose format agy documents as unstable.
 
 ---
 
@@ -281,7 +281,7 @@ Reset times (`↺`) are rendered in local time (= `/usage`'s timezone): the 5-ho
 Opus · ctx [███░░░░░] 86k/200k 43% · 5h [██░░░░░░] 24% ↺2pm · 7d [███░░░░░] 41% ↺Jun 14 1pm
 ```
 
-**CLI parity:** Claude Code only for now. Codex / Gemini status lines use different formats and stdin schemas; their adapters would live under `statusline/codex/` and `statusline/gemini/` when added.
+**CLI parity:** Claude Code and Antigravity CLI (agy) both support the status line. Codex status lines use different formats and stdin schemas; its adapter would live under `statusline/codex/` when added.
 
 **Distribution:** Copied to `~/.claude/statusline.sh` by `scripts/claude/install.sh`, which also registers the `statusLine` command in `settings.json` (idempotent).
 
@@ -317,7 +317,7 @@ echo "4" | bash install.sh  # Install to all CLIs
 The new rules appear in:
 - `~/.claude/CLAUDE.md` (Claude Code)
 - `~/.codex/AGENTS.md` (Codex CLI)
-- `~/.gemini/GEMINI.md` (Gemini CLI)
+- `~/.gemini/config/AGENTS.md` (Antigravity CLI)
 
 ---
 
@@ -460,12 +460,12 @@ Distribute via `install.sh` after committing.
   ┌──────────────────┐           ┌──────────────────┐   ┌─────────────┐
   │ ~/.claude        │           │ ~/.codex         │   │ ~/.gemini   │
   ├──────────────────┤           ├──────────────────┤   ├─────────────┤
-  │ CLAUDE.md        │           │ AGENTS.md        │   │ GEMINI.md   │
-  │ hooks/           │           │ hooks/           │   │ hooks/      │
-  │ skills/          │           │ skills/          │   │ skills/     │
-  │ commands/        │           │ (limited)        │   │ (limited)   │
-  │ rules/           │           │                  │   │             │
-  │ statusline.sh    │           │                  │   │             │
+  │ CLAUDE.md        │           │ AGENTS.md        │   │ config/     │
+  │ hooks/           │           │ hooks/           │   │  AGENTS.md  │
+  │ skills/          │           │ skills/          │   │ hooks/      │
+  │ commands/        │           │ (limited)        │   │ skills/     │
+  │ rules/           │           │                  │   │ rules/      │
+  │ statusline.sh    │           │                  │   │ statusline.sh│
   └──────────────────┘           └──────────────────┘   └─────────────┘
 ```
 
@@ -476,5 +476,5 @@ Distribute via `install.sh` after committing.
 1. **Single Source of Truth** — Edit `GLOBAL_RULES.md` once, distribute to all CLIs
 2. **Non-Destructive Hooks** — branch-guard.sh blocks, doesn't modify
 3. **Reversible Distribution** — Can always re-run `install.sh` to sync
-4. **CLI Parity** — Same rules across Claude Code, Codex, Gemini
+4. **CLI Parity** — Same rules across Claude Code, Codex, agy
 5. **Feature Branch Workflow** — All edits on feature branches, protected main via hooks

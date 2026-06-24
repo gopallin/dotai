@@ -69,11 +69,11 @@ cp "$DOTAI_DIR/hooks/codex/stop-guard.sh" "$CLAUDE_DIR/hooks/codex/stop-guard.sh
 chmod +x "$CLAUDE_DIR/hooks/codex/stop-guard.sh"
 echo "✅ codex/stop-guard.sh      → $CLAUDE_DIR/hooks/codex/stop-guard.sh"
 
-# Gemini hooks
-mkdir -p "$CLAUDE_DIR/hooks/gemini"
-cp "$DOTAI_DIR/hooks/gemini/stop-guard.sh" "$CLAUDE_DIR/hooks/gemini/stop-guard.sh"
-chmod +x "$CLAUDE_DIR/hooks/gemini/stop-guard.sh"
-echo "✅ gemini/stop-guard.sh     → $CLAUDE_DIR/hooks/gemini/stop-guard.sh"
+# agy hooks
+mkdir -p "$CLAUDE_DIR/hooks/agy"
+cp "$DOTAI_DIR/hooks/agy/stop-guard.sh" "$CLAUDE_DIR/hooks/agy/stop-guard.sh"
+chmod +x "$CLAUDE_DIR/hooks/agy/stop-guard.sh"
+echo "✅ agy/stop-guard.sh     → $CLAUDE_DIR/hooks/agy/stop-guard.sh"
 
 # grounding-guard (front-of-work gate; Claude blocks, codex/gemini advisory)
 cp "$DOTAI_DIR/hooks/claude/grounding-guard.sh" "$CLAUDE_DIR/hooks/claude/grounding-guard.sh"
@@ -84,9 +84,9 @@ cp "$DOTAI_DIR/hooks/codex/grounding-guard.sh" "$CLAUDE_DIR/hooks/codex/groundin
 chmod +x "$CLAUDE_DIR/hooks/codex/grounding-guard.sh"
 echo "✅ codex/grounding-guard.sh  → $CLAUDE_DIR/hooks/codex/grounding-guard.sh"
 
-cp "$DOTAI_DIR/hooks/gemini/grounding-guard.sh" "$CLAUDE_DIR/hooks/gemini/grounding-guard.sh"
-chmod +x "$CLAUDE_DIR/hooks/gemini/grounding-guard.sh"
-echo "✅ gemini/grounding-guard.sh → $CLAUDE_DIR/hooks/gemini/grounding-guard.sh"
+cp "$DOTAI_DIR/hooks/agy/grounding-guard.sh" "$CLAUDE_DIR/hooks/agy/grounding-guard.sh"
+chmod +x "$CLAUDE_DIR/hooks/agy/grounding-guard.sh"
+echo "✅ agy/grounding-guard.sh → $CLAUDE_DIR/hooks/agy/grounding-guard.sh"
 
 # read-dedup-guard (blocks full re-reads of files already in context)
 cp "$DOTAI_DIR/hooks/claude/read-dedup-guard.sh" "$CLAUDE_DIR/hooks/claude/read-dedup-guard.sh"

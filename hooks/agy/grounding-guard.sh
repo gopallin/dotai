@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
-# grounding-guard.sh (Gemini CLI adapter — ADVISORY ONLY)
+# grounding-guard.sh (agy CLI adapter — ADVISORY ONLY)
 # Front-of-work mirror of the Claude grounding-guard, downgraded to advisory:
-# it reminds, it does NOT block (always exit 0). Gemini's pre-tool hook contract
+# it reminds, it does NOT block (always exit 0). agy's pre-tool hook contract
 # and edit-tool names are not verified here; this stub keeps the structure
 # cross-CLI compatible and is meant to be hardened later.
 # See plan-grounding-guard.md §3.1 / §4 #8.
 #
-# TODO(gemini): confirm the pre-tool event + edit tool names (write_file/
+# TODO(agy): confirm the pre-tool event + edit tool names (write_file/
 # edit_file/replace_in_file), add a per-session "first edit" counter, then
 # switch to exit 2 when GROUNDING_STATUS=PASS/SKIP is absent.
 

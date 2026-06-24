@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 #
-# install-gemini.sh — install dotai into Gemini CLI (~/.gemini/)
+# install.sh — install dotai into Antigravity CLI (~/.gemini/)
 #
 # What this does:
-#   1. Syncs global rules from dotai/GLOBAL_RULES.md to ~/.gemini/GEMINI.md
-#   2. Copies hook scripts to ~/.gemini/hooks/
-#   3. Registers AfterAgent hooks in ~/.gemini/settings.json
+#   1. Syncs global rules from dotai/GLOBAL_RULES.md to ~/.gemini/config/AGENTS.md
+#   2. Copies commands to ~/.gemini/commands/
+#   3. Copies skills to ~/.gemini/skills/
+#   4. Copies hook scripts to ~/.gemini/hooks/
+#   5. Copies rules to ~/.gemini/rules/
+#   6. Registers AfterAgent hooks in ~/.gemini/settings.json
 
 set -euo pipefail
 
@@ -17,15 +20,39 @@ command -v jq >/dev/null 2>&1 || {
 DOTAI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 GEMINI_DIR="$HOME/.gemini"
 
-echo "Installing dotai → Gemini CLI ($GEMINI_DIR)"
+echo "Installing dotai → Antigravity CLI ($GEMINI_DIR)"
 echo ""
 
 # ── 1. Global Rules Sync ──────────────────────────────────────────────────────
 
-mkdir -p "$GEMINI_DIR"
+mkdir -p "$GEMINI_DIR/config"
 if [ -f "$DOTAI_DIR/GLOBAL_RULES.md" ]; then
-  cp "$DOTAI_DIR/GLOBAL_RULES.md" "$GEMINI_DIR/GEMINI.md"
-  echo "✅ Global Rules       → $GEMINI_DIR/GEMINI.md"
+  cp "$DOTAI_DIR/GLOBAL_RULES.md" "$GEMINI_DIR/config/AGENTS.md"
+  echo "✅ Global Rules       → $GEMINI_DIR/config/AGENTS.md"
+fi
+
+# ── 2. Commands ───────────────────────────────────────────────────────────────
+
+mkdir -p "$GEMINI_DIR/commands"
+cp "$DOTAI_DIR/commands/precommit.md" "$GEMINI_DIR/commands/precommit.md"
+echo "✅ /precommit command → $GEMINI_DIR/commands/precommit.md"
+
+cp "$DOTAI_DIR/commands/plan.md" "$GEMINI_DIR/commands/plan.md"
+echo "✅ /plan command      → $GEMINI_DIR/commands/plan.md"
+
+cp "$DOTAI_DIR/commands/prompt.md" "$GEMINI_DIR/commands/prompt.md"
+echo "✅ /prompt command    → $GEMINI_DIR/commands/prompt.md"
+
+cp "$DOTAI_DIR/commands/prompt-template.sh" "$GEMINI_DIR/commands/prompt-template.sh"
+chmod +x "$GEMINI_DIR/commands/prompt-template.sh"
+echo "✅ /prompt template   → $GEMINI_DIR/commands/prompt-template.sh"
+
+# ── 3. Skills ────────────────────────────────────────────────────────────────
+
+mkdir -p "$GEMINI_DIR/skills"
+if [ -d "$DOTAI_DIR/skills" ]; then
+  cp "$DOTAI_DIR/skills"/*.md "$GEMINI_DIR/skills/" 2>/dev/null || true
+  echo "✅ Skills              → $GEMINI_DIR/skills/"
 fi
 
 # ── 2. Install hook scripts ───────────────────────────────────────────────────
@@ -33,7 +60,7 @@ fi
 mkdir -p "$GEMINI_DIR/hooks/shared"
 
 # stop-guard
-cp "$DOTAI_DIR/hooks/gemini/stop-guard.sh" "$GEMINI_DIR/hooks/stop-guard.sh"
+cp "$DOTAI_DIR/hooks/agy/stop-guard.sh" "$GEMINI_DIR/hooks/stop-guard.sh"
 chmod +x "$GEMINI_DIR/hooks/stop-guard.sh"
 echo "✅ stop-guard.sh     → $GEMINI_DIR/hooks/stop-guard.sh"
 
@@ -42,22 +69,36 @@ cp "$DOTAI_DIR/hooks/shared/complexity-guard.sh" "$GEMINI_DIR/hooks/complexity-g
 chmod +x "$GEMINI_DIR/hooks/complexity-guard.sh"
 echo "✅ complexity-guard.sh → $GEMINI_DIR/hooks/complexity-guard.sh"
 
-# branch-guard (stored but not auto-triggered; Gemini CLI lacks PreCommand hook)
+# branch-guard (stored but not auto-triggered; agy CLI lacks PreCommand hook)
 mkdir -p "$GEMINI_DIR/hooks/shared"
 cp "$DOTAI_DIR/hooks/shared/branch-guard.sh" "$GEMINI_DIR/hooks/shared/branch-guard.sh"
 chmod +x "$GEMINI_DIR/hooks/shared/branch-guard.sh"
 echo "✅ shared/branch-guard.sh → $GEMINI_DIR/hooks/shared/branch-guard.sh (manual invoke)"
 
 # context-budget-guard (advisory: reminds to start fresh when session grows large)
-cp "$DOTAI_DIR/hooks/gemini/context-budget-guard.sh" "$GEMINI_DIR/hooks/context-budget-guard.sh"
+cp "$DOTAI_DIR/hooks/agy/context-budget-guard.sh" "$GEMINI_DIR/hooks/context-budget-guard.sh"
 chmod +x "$GEMINI_DIR/hooks/context-budget-guard.sh"
 echo "✅ context-budget-guard.sh → $GEMINI_DIR/hooks/context-budget-guard.sh"
 
 # read-dedup-guard (EXPERIMENTAL: blocks full re-reads via BeforeTool/read_file —
-# verify that BeforeTool fires for read_file on your installed Gemini version)
-cp "$DOTAI_DIR/hooks/gemini/read-dedup-guard.sh" "$GEMINI_DIR/hooks/read-dedup-guard.sh"
+# verify that BeforeTool fires for read_file on your installed agy version)
+cp "$DOTAI_DIR/hooks/agy/read-dedup-guard.sh" "$GEMINI_DIR/hooks/read-dedup-guard.sh"
 chmod +x "$GEMINI_DIR/hooks/read-dedup-guard.sh"
 echo "✅ read-dedup-guard.sh → $GEMINI_DIR/hooks/read-dedup-guard.sh (experimental)"
+
+# ── 5. Install rules (framework-specific) ────────────────────────────────────
+
+mkdir -p "$GEMINI_DIR/rules"
+cp "$DOTAI_DIR/rules/laravel.md" "$GEMINI_DIR/rules/laravel.md"
+cp "$DOTAI_DIR/rules/vue.md"     "$GEMINI_DIR/rules/vue.md"
+cp "$DOTAI_DIR/rules/node.md"    "$GEMINI_DIR/rules/node.md"
+echo "✅ Rules              → $GEMINI_DIR/rules/"
+
+# ── 6. Status line ──────────────────────────────────────────────────────────
+
+cp "$DOTAI_DIR/statusline/agy/statusline.sh" "$GEMINI_DIR/statusline.sh"
+chmod +x "$GEMINI_DIR/statusline.sh"
+echo "✅ statusline.sh      → $GEMINI_DIR/statusline.sh"
 
 # ── 3. Register hooks in settings.json ────────────────────────────────────────
 
@@ -69,7 +110,7 @@ else
   EXISTING="{}"
 fi
 
-# timeout is milliseconds in Gemini CLI
+# timeout is milliseconds in agy CLI
 UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
   # AfterAgent hooks (fire after each agent turn)
   def after_hooks: [
@@ -133,7 +174,13 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
   def filter_before: map(select((.hooks[0].name // "") != "read-dedup-guard"));
 
   .hooks.AfterAgent = (after_hooks + (.hooks.AfterAgent // [] | filter_after)) |
-  .hooks.BeforeTool = (before_hooks + (.hooks.BeforeTool // [] | filter_before))
+  .hooks.BeforeTool = (before_hooks + (.hooks.BeforeTool // [] | filter_before)) |
+  # Register status line — dotai owns this key
+  .statusLine = {
+    "type": "command",
+    "command": "bash \($home)/.gemini/statusline.sh",
+    "padding": 0
+  }
 ')
 
 echo "$UPDATED" > "$SETTINGS"
@@ -142,15 +189,18 @@ echo "✅ Hooks registered   → $SETTINGS"
 # ── Done ──────────────────────────────────────────────────────────────────────
 
 echo ""
-echo "dotai → Gemini CLI installed."
+echo "dotai → Antigravity CLI (agy) installed."
 echo ""
 echo "Available:"
+echo "  /plan            structured design planning"
+echo "  /precommit       run lint + build + test"
+echo "  /prompt          turn a rough idea into a structured, AI-ready task prompt"
 echo "  stop-guard       auto-blocks stopping if quality checks were skipped"
 echo "  complexity-guard alerts on manual exploration loops"
 echo "  context-budget-guard advisory: reminds to start fresh when the session grows large"
 echo "  read-dedup-guard EXPERIMENTAL: blocks full re-reads (verify BeforeTool fires for read_file)"
 echo "  branch-guard     (available for manual invoke; auto-trigger requires PreCommand hook support)"
-echo "  rules/           GEMINI.md with global AI CLI rules"
-echo ""
-echo "Note: /plan command is Claude Code-only. Gemini CLI uses structured prompts instead."
+echo "  statusline       model · context-usage bar · /usage rate-limit bars"
+echo "  rules/           AGENTS.md (global) and laravel.md · vue.md · node.md (path-filtered)"
+echo "  skills/          git-push (auto-detect GitLab/GitHub + Keychain auth)"
 echo ""
