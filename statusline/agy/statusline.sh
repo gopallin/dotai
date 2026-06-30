@@ -13,12 +13,23 @@ input=$(cat)
 
 jqr() { printf '%s' "$input" | jq -r "$1" 2>/dev/null; }
 
+fmt_duration() {
+  local s="$1"
+  [ -z "$s" ] || [ "$s" = "null" ] && return
+  local h=$((s / 3600))
+  local m=$(((s % 3600) / 60))
+  echo "${h}h ${m}m"
+}
+
 # Render a colored bar: bar <pct> [width] -> "████░░░░"
 # Purple normally; red when this bar is >80% used.
+# Render a colored bar: bar <pct> [width] [is_remaining]
+# Purple normally; red when high usage (>80% used) or low remaining (<=20% remaining).
 bar() {
-  awk -v p="${1:-0}" -v w="${2:-8}" 'BEGIN{
+  awk -v p="${1:-0}" -v w="${2:-8}" -v rem="${3:-0}" 'BEGIN{
     esc = sprintf("%c", 27);
-    col = (p > 80) ? esc "[38;5;203m" : esc "[38;5;141m";   # red / purple
+    is_red = rem ? (p <= 20) : (p > 80);
+    col = is_red ? esc "[38;5;203m" : esc "[38;5;141m";   # red / purple
     rst = esc "[0m";
     f = int(p*w/100 + 0.5); if(f>w)f=w; if(f<0)f=0;
     s=""; for(i=0;i<f;i++)s=s"█"; for(i=f;i<w;i++)s=s"░";
@@ -61,13 +72,21 @@ fi
 out="$model · $ctx"
 
 # --- plan rate limits (= /usage); only if the account exposes them ---
-five=$(jqr '.rate_limits.five_hour.used_percentage // empty')
-seven=$(jqr '.rate_limits.seven_day.used_percentage // empty')
-if [ -n "$five" ]; then
-  fi5=$(intpct "$five"); fi7=$(intpct "$seven")
-  r5=$(fmt_reset "$(jqr '.rate_limits.five_hour.resets_at // empty')" time)
-  r7=$(fmt_reset "$(jqr '.rate_limits.seven_day.resets_at // empty')" date)
-  out="$out · 5h [$(bar "$fi5")] ${fi5}%${r5:+ ↺$r5} · 7d [$(bar "$fi7")] ${fi7}%${r7:+ ↺$r7}"
+gem_rem_frac=$(jqr '.quota["gemini-weekly"].remaining_fraction // empty')
+tp_rem_frac=$(jqr '.quota["3p-weekly"].remaining_fraction // empty')
+
+if [ -n "$gem_rem_frac" ]; then
+  gem_rem=$(awk -v f="$gem_rem_frac" 'BEGIN { printf "%.0f", f * 100 }')
+  gem_sec=$(jqr '.quota["gemini-weekly"].reset_in_seconds // empty')
+  gem_reset=$(fmt_duration "$gem_sec")
+  out="$out · gemini [$(bar "$gem_rem" 8 1)] ${gem_rem}%${gem_reset:+ ↺$gem_reset}"
+fi
+
+if [ -n "$tp_rem_frac" ]; then
+  tp_rem=$(awk -v f="$tp_rem_frac" 'BEGIN { printf "%.0f", f * 100 }')
+  tp_sec=$(jqr '.quota["3p-weekly"].reset_in_seconds // empty')
+  tp_reset=$(fmt_duration "$tp_sec")
+  out="$out · claude-gpt [$(bar "$tp_rem" 8 1)] ${tp_rem}%${tp_reset:+ ↺$tp_reset}"
 fi
 
 printf '%s' "$out"

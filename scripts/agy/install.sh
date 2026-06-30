@@ -102,7 +102,7 @@ echo "✅ statusline.sh      → $GEMINI_DIR/statusline.sh"
 
 # ── 3. Register hooks in settings.json ────────────────────────────────────────
 
-SETTINGS="$GEMINI_DIR/settings.json"
+SETTINGS="$GEMINI_DIR/antigravity-cli/settings.json"
 
 if [[ -f "$SETTINGS" ]] && [[ -s "$SETTINGS" ]]; then
   EXISTING=$(cat "$SETTINGS")
