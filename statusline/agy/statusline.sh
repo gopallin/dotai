@@ -16,9 +16,13 @@ jqr() { printf '%s' "$input" | jq -r "$1" 2>/dev/null; }
 fmt_duration() {
   local s="$1"
   [ -z "$s" ] || [ "$s" = "null" ] && return
-  local h=$((s / 3600))
+  local d=$((s / 86400))
+  local h=$(((s % 86400) / 3600))
   local m=$(((s % 3600) / 60))
-  echo "${h}h ${m}m"
+  local out=""
+  [ "$d" -gt 0 ] && out="${d}d "
+  out="${out}${h}h ${m}m"
+  echo "$out"
 }
 
 # Render a colored bar: bar <pct> [width] -> "████░░░░"
@@ -76,17 +80,17 @@ gem_rem_frac=$(jqr '.quota["gemini-weekly"].remaining_fraction // empty')
 tp_rem_frac=$(jqr '.quota["3p-weekly"].remaining_fraction // empty')
 
 if [ -n "$gem_rem_frac" ]; then
-  gem_rem=$(awk -v f="$gem_rem_frac" 'BEGIN { printf "%.0f", f * 100 }')
+  gem_used=$(awk -v f="$gem_rem_frac" 'BEGIN { printf "%.0f", (1 - f) * 100 }')
   gem_sec=$(jqr '.quota["gemini-weekly"].reset_in_seconds // empty')
   gem_reset=$(fmt_duration "$gem_sec")
-  out="$out · gemini [$(bar "$gem_rem" 8 1)] ${gem_rem}%${gem_reset:+ ↺$gem_reset}"
+  out="$out · gemini [$(bar "$gem_used" 8)] ${gem_used}%${gem_reset:+ ↺$gem_reset}"
 fi
 
 if [ -n "$tp_rem_frac" ]; then
-  tp_rem=$(awk -v f="$tp_rem_frac" 'BEGIN { printf "%.0f", f * 100 }')
+  tp_used=$(awk -v f="$tp_rem_frac" 'BEGIN { printf "%.0f", (1 - f) * 100 }')
   tp_sec=$(jqr '.quota["3p-weekly"].reset_in_seconds // empty')
   tp_reset=$(fmt_duration "$tp_sec")
-  out="$out · claude-gpt [$(bar "$tp_rem" 8 1)] ${tp_rem}%${tp_reset:+ ↺$tp_reset}"
+  out="$out · claude-gpt [$(bar "$tp_used" 8)] ${tp_used}%${tp_reset:+ ↺$tp_reset}"
 fi
 
 printf '%s' "$out"
