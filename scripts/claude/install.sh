@@ -108,6 +108,10 @@ cp "$DOTAI_DIR/hooks/shared/branch-guard.sh" "$CLAUDE_DIR/hooks/shared/branch-gu
 chmod +x "$CLAUDE_DIR/hooks/shared/branch-guard.sh"
 echo "✅ shared/branch-guard.sh     → $CLAUDE_DIR/hooks/shared/branch-guard.sh"
 
+cp "$DOTAI_DIR/hooks/shared/glab-guard.sh" "$CLAUDE_DIR/hooks/shared/glab-guard.sh"
+chmod +x "$CLAUDE_DIR/hooks/shared/glab-guard.sh"
+echo "✅ shared/glab-guard.sh       → $CLAUDE_DIR/hooks/shared/glab-guard.sh"
+
 # ── 3b. Status line (Claude Code only) ────────────────────────────────────────
 
 cp "$DOTAI_DIR/statusline/claude/statusline.sh" "$CLAUDE_DIR/statusline.sh"
@@ -163,6 +167,16 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
       ]
     },
     {
+      "matcher": "Bash",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash \($home)/.claude/hooks/shared/glab-guard.sh",
+          "timeout": 5
+        }
+      ]
+    },
+    {
       "matcher": "Edit|Write|MultiEdit",
       "hooks": [
         {
@@ -193,7 +207,7 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
       ]
     }
   ] + (.hooks.PreToolUse // [] | map(select(
-    (.hooks[0].command | test("shared/(complexity|branch)-guard\\.sh$|claude/(grounding|read-dedup|context-budget)-guard\\.sh$")) | not
+    (.hooks[0].command | test("shared/(complexity|branch|glab)-guard\\.sh$|claude/(grounding|read-dedup|context-budget)-guard\\.sh$")) | not
   )))) |
   # Register status line (Claude Code only) — dotai owns this key
   .statusLine = {
@@ -230,6 +244,7 @@ echo "  complexity-guard alerts on manual exploration loops"
 echo "  read-dedup-guard blocks full re-reads of files already in context"
 echo "  context-budget-guard reminds you to /clear when the session grows large"
 echo "  branch-guard     prevents accidental pushes to master/main"
+echo "  glab-guard       blocks glab CLI, directs to curl + \$GITLAB_TOKEN + jq"
 echo "  statusline       model · context-usage bar · /usage rate-limit bars"
 echo "  rules/           laravel.md · vue.md · node.md (path-filtered)"
 echo "  skills/          git-push (auto-detect GitLab/GitHub + Keychain auth)"
