@@ -102,6 +102,12 @@ For **complex architectural decisions**, proactively suggest parallel multi-agen
 - Reference `~/.zshrc` for setup; don't assume env vars unless documented in CLAUDE.md.
 - Capture both streams with `command > /tmp/file.out 2>&1`; don't silently discard stderr with `2>/dev/null` unless necessary.
 
+### Available Tokens (loaded from macOS Keychain in `.zshrc`)
+- `$GITLAB_TOKEN` / `$GITLAB_NPM_TOKEN` — always available in shell sessions.
+- **`glab` CLI is NOT installed.** Use `curl -s --header "PRIVATE-TOKEN: $GITLAB_TOKEN"` + `jq` for all GitLab API operations.
+- Always pipe GitLab API responses through `jq` to filter fields — never dump raw JSON (token cost).
+- For git push auth, read the `git-push` skill.
+
 ## Logging Standards
 - **Levels:** `debug` (flow details), `info` (business events), `warn` (recoverable), `error` (unrecoverable, with stack trace).
 - Include context (user/request/resource ID) as **structured fields** — `{userId, action, duration}`, not concatenated strings. Never log secrets.

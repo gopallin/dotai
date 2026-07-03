@@ -39,6 +39,10 @@ cp "$DOTAI_DIR/hooks/shared/branch-guard.sh" "$CODEX_DIR/hooks/shared/branch-gua
 chmod +x "$CODEX_DIR/hooks/shared/branch-guard.sh"
 echo "✅ shared/branch-guard.sh  → $CODEX_DIR/hooks/shared/branch-guard.sh"
 
+cp "$DOTAI_DIR/hooks/shared/glab-guard.sh" "$CODEX_DIR/hooks/shared/glab-guard.sh"
+chmod +x "$CODEX_DIR/hooks/shared/glab-guard.sh"
+echo "✅ shared/glab-guard.sh    → $CODEX_DIR/hooks/shared/glab-guard.sh"
+
 # context-budget-guard (advisory: reminds to start fresh when session grows large)
 cp "$DOTAI_DIR/hooks/codex/context-budget-guard.sh" "$CODEX_DIR/hooks/context-budget-guard.sh"
 chmod +x "$CODEX_DIR/hooks/context-budget-guard.sh"
@@ -91,9 +95,19 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
           "timeout": 5
         }
       ]
+    },
+    {
+      "matcher": "Bash",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash \($home)/.codex/hooks/shared/glab-guard.sh",
+          "timeout": 5
+        }
+      ]
     }
   ] + (.hooks.PreToolUse // [] | map(select(
-    (.hooks[0].command | test("branch-guard\\.sh$|context-budget-guard\\.sh$")) | not
+    (.hooks[0].command | test("branch-guard\\.sh$|context-budget-guard\\.sh$|glab-guard\\.sh$")) | not
   ))))
 ')
 
@@ -108,4 +122,5 @@ echo ""
 echo "Available after restart:"
 echo "  stop-guard       auto-blocks stopping if verifications incomplete"
 echo "  branch-guard     prevents accidental pushes to master/main"
+echo "  glab-guard       blocks glab CLI, directs to curl + \$GITLAB_TOKEN + jq"
 echo "  context-budget-guard advisory: reminds to start fresh when the session grows large"

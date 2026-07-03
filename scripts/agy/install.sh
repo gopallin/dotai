@@ -75,6 +75,10 @@ cp "$DOTAI_DIR/hooks/shared/branch-guard.sh" "$GEMINI_DIR/hooks/shared/branch-gu
 chmod +x "$GEMINI_DIR/hooks/shared/branch-guard.sh"
 echo "✅ shared/branch-guard.sh → $GEMINI_DIR/hooks/shared/branch-guard.sh (manual invoke)"
 
+cp "$DOTAI_DIR/hooks/shared/glab-guard.sh" "$GEMINI_DIR/hooks/shared/glab-guard.sh"
+chmod +x "$GEMINI_DIR/hooks/shared/glab-guard.sh"
+echo "✅ shared/glab-guard.sh   → $GEMINI_DIR/hooks/shared/glab-guard.sh (manual invoke)"
+
 # context-budget-guard (advisory: reminds to start fresh when session grows large)
 cp "$DOTAI_DIR/hooks/agy/context-budget-guard.sh" "$GEMINI_DIR/hooks/context-budget-guard.sh"
 chmod +x "$GEMINI_DIR/hooks/context-budget-guard.sh"
@@ -166,12 +170,24 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
           "description": "EXPERIMENTAL: blocks full re-reads of files already in context"
         }
       ]
+    },
+    {
+      "matcher": "run_command",
+      "hooks": [
+        {
+          "name": "glab-guard",
+          "type": "command",
+          "command": "bash \($home)/.gemini/hooks/shared/glab-guard.sh",
+          "timeout": 5000,
+          "description": "Blocks glab CLI usage; directs to curl + $GITLAB_TOKEN"
+        }
+      ]
     }
   ];
 
   # Filter out old versions of these hooks before re-adding (idempotent re-runs)
   def filter_after: map(select((.hooks[0].name // "") as $n | $n != "stop-guard" and $n != "complexity-guard" and $n != "context-budget-guard"));
-  def filter_before: map(select((.hooks[0].name // "") != "read-dedup-guard"));
+  def filter_before: map(select((.hooks[0].name // "") as $n | $n != "read-dedup-guard" and $n != "glab-guard"));
 
   .hooks.AfterAgent = (after_hooks + (.hooks.AfterAgent // [] | filter_after)) |
   .hooks.BeforeTool = (before_hooks + (.hooks.BeforeTool // [] | filter_before)) |
@@ -200,6 +216,7 @@ echo "  complexity-guard alerts on manual exploration loops"
 echo "  context-budget-guard advisory: reminds to start fresh when the session grows large"
 echo "  read-dedup-guard EXPERIMENTAL: blocks full re-reads (verify BeforeTool fires for read_file)"
 echo "  branch-guard     (available for manual invoke; auto-trigger requires PreCommand hook support)"
+echo "  glab-guard       (available for manual invoke; auto-trigger requires BeforeTool support for run_command)"
 echo "  statusline       model · context-usage bar · /usage rate-limit bars"
 echo "  rules/           AGENTS.md (global) and laravel.md · vue.md · node.md (path-filtered)"
 echo "  skills/          git-push (auto-detect GitLab/GitHub + Keychain auth)"
