@@ -137,7 +137,8 @@ Ran but FAIL? Still cannot stop.
 │       └── install.sh          ← Antigravity CLI installer
 ├── commands/
 │   ├── precommit.md            ← /precommit slash command
-│   └── plan.md                 ← /plan design planning command
+│   ├── plan.md                 ← /plan design planning command (+ ticket decomposition)
+│   └── next-ticket.md          ← /next-ticket pick up next unblocked ticket (one slice per session)
 ├── skills/
 │   ├── git-push.md             ← automatic GitLab/GitHub push
 │   └── ground.md               ← /ground pre-implementation grounding check
