@@ -149,7 +149,8 @@ Ran but FAIL? Still cannot stop.
 │   │   ├── stop-guard.sh       ← Claude Code Stop event hook
 │   │   ├── grounding-guard.sh  ← Claude PreToolUse hook (blocks first un-grounded edit)
 │   │   ├── read-dedup-guard.sh ← Claude PreToolUse hook (blocks full re-reads of files already in context)
-│   │   └── context-budget-guard.sh ← Claude PreToolUse hook (advisory: reminds to /clear when session grows large)
+│   │   ├── context-budget-guard.sh ← Claude PreToolUse hook (advisory: reminds to /clear when session grows large)
+│   │   └── handoff-reminder.sh ← Claude SessionStart hook (after /clear: offer /resume+/handoff or transcript rebuild; no codex/agy equivalent event)
 │   ├── codex/
 │   │   ├── stop-guard.sh       ← Codex CLI Stop event hook
 │   │   ├── grounding-guard.sh  ← Codex grounding hook (advisory)

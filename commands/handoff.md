@@ -55,7 +55,17 @@ Confirm with:
 
 > **Handoff saved → `{path}`.** Run `/clear`, then start the next session with `@{path}` (or `/next-ticket` if this branch uses tickets — INDEX.md already tracks ticket state).
 
+## Reconstruction Mode (rebuilding from a cleared session's transcript)
+
+When the handoff-reminder hook (or the user) asks you to rebuild a handoff from a previous session's transcript instead of live memory:
+
+1. **Read only the tail** of the transcript (roughly the last 200 lines), skipping large tool-result blobs. Reading the whole transcript re-pays the context the user just cleared — that defeats `/clear`.
+2. Write the same format as Step 3, but title it `# Handoff (reconstructed): ...` and add a first line: `> Reconstructed from transcript tail — unverified; mid-session decisions may be missing.`
+3. **Done (verified)** may only contain claims with visible evidence in the transcript (e.g. test output). Everything else goes under **Gotchas** as unverified.
+4. Ignore rules and overwrite behavior are identical to a normal handoff.
+
 ## Notes
 
 - If working inside the `/plan` ticket flow and a ticket was **completed**, INDEX.md is the handoff — this command is for mid-ticket interruptions and non-ticketed work.
 - Stale handoff files are harmless: git-ignored, overwritten on next use.
+- The handoff-reminder hook (SessionStart on `/clear`, Claude Code only) is the safety net for forgotten handoffs: it offers `/resume` + `/handoff` (high fidelity) or reconstruction (cheap). Proactive `/handoff` before `/clear` still beats both.
