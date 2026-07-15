@@ -33,7 +33,7 @@ if [[ -n "$TRANSCRIPT" ]] && [[ -f "$TRANSCRIPT" ]]; then
         echo "$BAND" > "$MARKER"
         echo "ℹ️  [advisory] Session transcript is large (~${LINES} lines)." >&2
         echo "    Long sessions re-send their whole context every turn (~96% of token cost)." >&2
-        echo "    If the next task is unrelated, start a fresh session; for a long marathon, split it." >&2
+        echo "    Run /handoff to save a resume file, then start a fresh session from the handoff." >&2
       fi
     fi
   fi

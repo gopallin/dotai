@@ -28,7 +28,15 @@ if [ -f "$DOTAI_DIR/GLOBAL_RULES.md" ]; then
   echo "✅ Global Rules       → $CODEX_DIR/AGENTS.md"
 fi
 
-# ── 2. Install hook scripts ───────────────────────────────────────────────────
+# ── 2. Commands (Codex custom prompts: ~/.codex/prompts/*.md → /name) ─────────
+
+mkdir -p "$CODEX_DIR/prompts"
+for cmd in precommit plan next-ticket handoff; do
+  cp "$DOTAI_DIR/commands/$cmd.md" "$CODEX_DIR/prompts/$cmd.md"
+  echo "✅ /$cmd prompt → $CODEX_DIR/prompts/$cmd.md"
+done
+
+# ── 3. Install hook scripts ───────────────────────────────────────────────────
 
 mkdir -p "$CODEX_DIR/hooks/shared"
 cp "$DOTAI_DIR/hooks/codex/stop-guard.sh" "$CODEX_DIR/hooks/stop-guard.sh"
@@ -48,7 +56,7 @@ cp "$DOTAI_DIR/hooks/codex/context-budget-guard.sh" "$CODEX_DIR/hooks/context-bu
 chmod +x "$CODEX_DIR/hooks/context-budget-guard.sh"
 echo "✅ context-budget-guard.sh → $CODEX_DIR/hooks/context-budget-guard.sh"
 
-# ── 3. Register Stop hook in hooks.json ──────────────────────────────────────
+# ── 4. Register Stop hook in hooks.json ──────────────────────────────────────
 
 HOOKS_FILE="$CODEX_DIR/hooks.json"
 
@@ -120,6 +128,10 @@ echo ""
 echo "dotai → Codex CLI installed."
 echo ""
 echo "Available after restart:"
+echo "  /plan            structured design planning (save to plan.md, optionally decompose into tickets)"
+echo "  /next-ticket     pick up the next unblocked ticket (one context-sized slice per session)"
+echo "  /handoff         save a compact resume file before starting fresh (local-only, never committed)"
+echo "  /precommit       run lint + build + test"
 echo "  stop-guard       auto-blocks stopping if verifications incomplete"
 echo "  branch-guard     prevents accidental pushes to master/main"
 echo "  glab-guard       blocks glab CLI, directs to curl + \$GITLAB_TOKEN + jq"

@@ -35,8 +35,9 @@ One ticket per session. This command exists so each work session starts from a f
 2. Run `/precommit` (stop-guard enforces this anyway).
 3. Set `status: done` in the ticket frontmatter and INDEX table.
 4. Fill the ticket's **Decision Log** with any non-obvious decisions made, then append a one-line gist to INDEX.md's **Decisions So Far** (`{NN}: {gist}`).
-5. Report: tickets remaining, and what the next frontier ticket is.
-6. Finish with:
+5. If this ticket introduced or clarified domain terms and the project keeps a `CONTEXT.md` glossary, append them (`**{term}** — {one-line definition}`).
+6. Report: tickets remaining, and what the next frontier ticket is.
+7. Finish with:
 
 > **Ticket {NN} done.** Commit this slice, then `/clear` and run `/next-ticket` in a fresh session for the next one.
 

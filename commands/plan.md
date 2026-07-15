@@ -205,6 +205,17 @@ After writing all files, show the ticket table and finish with:
 
 ---
 
+## Step 8: Domain Glossary (CONTEXT.md)
+
+Runs after approval, regardless of the save choice in Step 6:
+
+1. **If the project has a `CONTEXT.md` glossary:** append any domain terms this plan introduced or clarified — `**{term}** — {one-line definition}`. Do nothing if no new terms surfaced.
+2. **If no `CONTEXT.md` exists** and this plan coined 3+ domain terms: offer to create one, and add an `@CONTEXT.md` import line to the project's `CLAUDE.md`. The import is the enforcement — the glossary then loads deterministically every session instead of relying on AI compliance.
+
+Glossary entries are definitions only — no implementation details, no status. Keep each to one line.
+
+---
+
 ## Notes
 
 - **Always ask one question at a time** and wait for the user's response before proceeding.
