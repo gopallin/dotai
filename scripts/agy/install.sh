@@ -40,6 +40,9 @@ echo "✅ /precommit command → $GEMINI_DIR/commands/precommit.md"
 cp "$DOTAI_DIR/commands/plan.md" "$GEMINI_DIR/commands/plan.md"
 echo "✅ /plan command      → $GEMINI_DIR/commands/plan.md"
 
+cp "$DOTAI_DIR/commands/next-ticket.md" "$GEMINI_DIR/commands/next-ticket.md"
+echo "✅ /next-ticket command → $GEMINI_DIR/commands/next-ticket.md"
+
 cp "$DOTAI_DIR/commands/prompt.md" "$GEMINI_DIR/commands/prompt.md"
 echo "✅ /prompt command    → $GEMINI_DIR/commands/prompt.md"
 
