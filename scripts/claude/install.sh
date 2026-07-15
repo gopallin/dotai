@@ -104,6 +104,11 @@ cp "$DOTAI_DIR/hooks/claude/context-budget-guard.sh" "$CLAUDE_DIR/hooks/claude/c
 chmod +x "$CLAUDE_DIR/hooks/claude/context-budget-guard.sh"
 echo "✅ claude/context-budget-guard.sh → $CLAUDE_DIR/hooks/claude/context-budget-guard.sh"
 
+# handoff-reminder (SessionStart on /clear: offer resume+handoff or reconstruction)
+cp "$DOTAI_DIR/hooks/claude/handoff-reminder.sh" "$CLAUDE_DIR/hooks/claude/handoff-reminder.sh"
+chmod +x "$CLAUDE_DIR/hooks/claude/handoff-reminder.sh"
+echo "✅ claude/handoff-reminder.sh → $CLAUDE_DIR/hooks/claude/handoff-reminder.sh"
+
 # Shared hooks
 mkdir -p "$CLAUDE_DIR/hooks/shared"
 cp "$DOTAI_DIR/hooks/shared/complexity-guard.sh" "$CLAUDE_DIR/hooks/shared/complexity-guard.sh"
@@ -215,6 +220,21 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
   ] + (.hooks.PreToolUse // [] | map(select(
     (.hooks[0].command | test("shared/(complexity|branch|glab)-guard\\.sh$|claude/(grounding|read-dedup|context-budget)-guard\\.sh$")) | not
   )))) |
+  # Register SessionStart hook (handoff-reminder fires only after /clear)
+  .hooks.SessionStart = ([
+    {
+      "matcher": "clear",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash \($home)/.claude/hooks/claude/handoff-reminder.sh",
+          "timeout": 10
+        }
+      ]
+    }
+  ] + (.hooks.SessionStart // [] | map(select(
+    (.hooks[0].command | test("claude/handoff-reminder\\.sh$")) | not
+  )))) |
   # Register status line (Claude Code only) — dotai owns this key
   .statusLine = {
     "type": "command",
@@ -251,6 +271,7 @@ echo "  grounding-guard  auto-blocks the first code edit until /ground passes"
 echo "  complexity-guard alerts on manual exploration loops"
 echo "  read-dedup-guard blocks full re-reads of files already in context"
 echo "  context-budget-guard reminds you to /clear when the session grows large"
+echo "  handoff-reminder after /clear: offers /resume+/handoff or transcript reconstruction"
 echo "  branch-guard     prevents accidental pushes to master/main"
 echo "  glab-guard       blocks glab CLI, directs to curl + \$GITLAB_TOKEN + jq"
 echo "  statusline       model · context-usage bar · /usage rate-limit bars"
