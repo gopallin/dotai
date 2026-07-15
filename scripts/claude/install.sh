@@ -41,6 +41,9 @@ echo "✅ /plan command      → $CLAUDE_DIR/commands/plan.md"
 cp "$DOTAI_DIR/commands/next-ticket.md" "$CLAUDE_DIR/commands/next-ticket.md"
 echo "✅ /next-ticket command → $CLAUDE_DIR/commands/next-ticket.md"
 
+cp "$DOTAI_DIR/commands/handoff.md" "$CLAUDE_DIR/commands/handoff.md"
+echo "✅ /handoff command   → $CLAUDE_DIR/commands/handoff.md"
+
 cp "$DOTAI_DIR/commands/prompt.md" "$CLAUDE_DIR/commands/prompt.md"
 echo "✅ /prompt command    → $CLAUDE_DIR/commands/prompt.md"
 
@@ -239,6 +242,7 @@ echo ""
 echo "Available after restart:"
 echo "  /plan            structured design planning (save to plan.md, optionally decompose into tickets)"
 echo "  /next-ticket     pick up the next unblocked ticket (one context-sized slice per session)"
+echo "  /handoff         save a compact resume file before /clear (local-only, never committed)"
 echo "  /precommit       run lint + build + test"
 echo "  /prompt          turn a rough idea into a structured, AI-ready task prompt"
 echo "  /ground          pre-implementation grounding check (read patterns + verify data)"

@@ -34,5 +34,5 @@ LAST_BAND=$(cat "$MARKER" 2>/dev/null)
 echo "$BAND" > "$MARKER"
 echo -e "\033[1;33m[dotai ADVISORY]\033[0m Session transcript is large (~${LINES} lines)." >&2
 echo "Long sessions re-send their whole context every turn (cache_read ≈ 96% of token cost)." >&2
-echo "If the next task is unrelated, run /clear to reset; for a long marathon, split into a fresh session." >&2
+echo "Run /handoff to save a resume file, then /clear; the next session starts from the handoff instead of replaying context." >&2
 exit 0
