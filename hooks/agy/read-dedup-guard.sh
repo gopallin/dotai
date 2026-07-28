@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 #
-# read-dedup-guard.sh (agy CLI adapter — EXPERIMENTAL, BLOCKS)
+# read-dedup-guard.sh (agy CLI adapter — needs BeforeTool event verification)
 # Port of the Claude read-dedup-guard: blocks a full re-read of a file already
 # read this session, to stop re-billing the whole file's tokens every later turn.
 #
-# ⚠️ UNVERIFIED — verify against your installed agy CLI before relying on this:
+# Status: logic is complete; two things need field-verification before this is
+# considered production-ready (see §Verification in CLAUDE.md):
 #   1. That the `BeforeTool` event actually FIRES for the built-in `read_file`
-#      tool (docs only show write_file/replace examples — antigravity.google/docs/hooks). If it does not fire, this hook is inert.
+#      tool (agy docs only show write_file/replace examples).
 #   2. That exit code 2 + stderr denies the call (the documented deny path).
+# If (1) does not fire, this hook is inert. If (2) does not block, downgrade
+# the exit 2 to exit 0 and log advisory only.
 #
-# Design difference vs the Claude version: agy's transcript format is not
-# documented as stable, so instead of parsing a transcript this hook tracks
-# already-read paths in a per-session marker file it maintains itself.
+# Design difference vs the Claude version: instead of parsing a transcript,
+# this hook tracks already-read paths in a per-session marker file it maintains.
 #
 # Escape hatch: pass offset/limit to read a range (always allowed). After editing
 # a file, re-read it with offset/limit — a plain full re-read stays blocked.

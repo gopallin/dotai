@@ -35,7 +35,14 @@ fi
 
 mkdir -p "$GEMINI_DIR/commands"
 cp "$DOTAI_DIR/commands/precommit.md" "$GEMINI_DIR/commands/precommit.md"
+# Replace hardcoded .claude path with .gemini for Antigravity CLI
+sed -i '' 's|\.claude/commands/precommit\.sh|\.gemini/commands/precommit\.sh|g' "$GEMINI_DIR/commands/precommit.md" 2>/dev/null || \
+sed -i 's|\.claude/commands/precommit\.sh|\.gemini/commands/precommit\.sh|g' "$GEMINI_DIR/commands/precommit.md"
 echo "✅ /precommit command → $GEMINI_DIR/commands/precommit.md"
+
+cp "$DOTAI_DIR/commands/precommit.sh" "$GEMINI_DIR/commands/precommit.sh"
+chmod +x "$GEMINI_DIR/commands/precommit.sh"
+echo "✅ /precommit script  → $GEMINI_DIR/commands/precommit.sh"
 
 cp "$DOTAI_DIR/commands/plan.md" "$GEMINI_DIR/commands/plan.md"
 echo "✅ /plan command      → $GEMINI_DIR/commands/plan.md"
@@ -70,6 +77,11 @@ cp "$DOTAI_DIR/hooks/agy/stop-guard.sh" "$GEMINI_DIR/hooks/stop-guard.sh"
 chmod +x "$GEMINI_DIR/hooks/stop-guard.sh"
 echo "✅ stop-guard.sh     → $GEMINI_DIR/hooks/stop-guard.sh"
 
+# grounding-guard (front-of-work gate)
+cp "$DOTAI_DIR/hooks/agy/grounding-guard.sh" "$GEMINI_DIR/hooks/grounding-guard.sh"
+chmod +x "$GEMINI_DIR/hooks/grounding-guard.sh"
+echo "✅ grounding-guard.sh → $GEMINI_DIR/hooks/grounding-guard.sh"
+
 # complexity-guard
 cp "$DOTAI_DIR/hooks/shared/complexity-guard.sh" "$GEMINI_DIR/hooks/complexity-guard.sh"
 chmod +x "$GEMINI_DIR/hooks/complexity-guard.sh"
@@ -90,11 +102,10 @@ cp "$DOTAI_DIR/hooks/agy/context-budget-guard.sh" "$GEMINI_DIR/hooks/context-bud
 chmod +x "$GEMINI_DIR/hooks/context-budget-guard.sh"
 echo "✅ context-budget-guard.sh → $GEMINI_DIR/hooks/context-budget-guard.sh"
 
-# read-dedup-guard (EXPERIMENTAL: blocks full re-reads via BeforeTool/read_file —
-# verify that BeforeTool fires for read_file on your installed agy version)
+# read-dedup-guard (needs BeforeTool/read_file verification)
 cp "$DOTAI_DIR/hooks/agy/read-dedup-guard.sh" "$GEMINI_DIR/hooks/read-dedup-guard.sh"
 chmod +x "$GEMINI_DIR/hooks/read-dedup-guard.sh"
-echo "✅ read-dedup-guard.sh → $GEMINI_DIR/hooks/read-dedup-guard.sh (experimental)"
+echo "✅ read-dedup-guard.sh → $GEMINI_DIR/hooks/read-dedup-guard.sh (needs verification)"
 
 # ── 5. Install rules (framework-specific) ────────────────────────────────────
 
@@ -162,9 +173,20 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
     }
   ];
 
-  # BeforeTool hooks (fire before a tool runs; can deny). EXPERIMENTAL: verify
-  # that BeforeTool fires for read_file on the installed Gemini version.
+  # BeforeTool hooks (fire before a tool runs; can deny).
   def before_hooks: [
+    {
+      "matcher": "write_to_file|replace_file_content|multi_replace_file_content|generate_image",
+      "hooks": [
+        {
+          "name": "grounding-guard",
+          "type": "command",
+          "command": "bash \($home)/.gemini/hooks/grounding-guard.sh",
+          "timeout": 10000,
+          "description": "Auto-blocks the first code edit until /ground passes"
+        }
+      ]
+    },
     {
       "matcher": "read_file",
       "hooks": [
@@ -173,7 +195,7 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
           "type": "command",
           "command": "bash \($home)/.gemini/hooks/read-dedup-guard.sh",
           "timeout": 5000,
-          "description": "EXPERIMENTAL: blocks full re-reads of files already in context"
+          "description": "Blocks full re-reads of files already in context"
         }
       ]
     },
@@ -193,7 +215,7 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
 
   # Filter out old versions of these hooks before re-adding (idempotent re-runs)
   def filter_after: map(select((.hooks[0].name // "") as $n | $n != "stop-guard" and $n != "complexity-guard" and $n != "context-budget-guard"));
-  def filter_before: map(select((.hooks[0].name // "") as $n | $n != "read-dedup-guard" and $n != "glab-guard"));
+  def filter_before: map(select((.hooks[0].name // "") as $n | $n != "grounding-guard" and $n != "read-dedup-guard" and $n != "glab-guard"));
 
   .hooks.AfterAgent = (after_hooks + (.hooks.AfterAgent // [] | filter_after)) |
   .hooks.BeforeTool = (before_hooks + (.hooks.BeforeTool // [] | filter_before)) |
@@ -218,9 +240,10 @@ echo "  /plan            structured design planning"
 echo "  /precommit       run lint + build + test"
 echo "  /prompt          turn a rough idea into a structured, AI-ready task prompt"
 echo "  stop-guard       auto-blocks stopping if quality checks were skipped"
+echo "  grounding-guard  auto-blocks the first code edit until /ground passes"
 echo "  complexity-guard alerts on manual exploration loops"
 echo "  context-budget-guard advisory: reminds to start fresh when the session grows large"
-echo "  read-dedup-guard EXPERIMENTAL: blocks full re-reads (verify BeforeTool fires for read_file)"
+echo "  read-dedup-guard blocks full re-reads (needs BeforeTool/read_file verification)"
 echo "  branch-guard     (available for manual invoke; auto-trigger requires PreCommand hook support)"
 echo "  glab-guard       (available for manual invoke; auto-trigger requires BeforeTool support for run_command)"
 echo "  statusline       model · context-usage bar · /usage rate-limit bars"

@@ -136,13 +136,18 @@ Ran but FAIL? Still cannot stop.
 │   └── agy/
 │       └── install.sh          ← Antigravity CLI installer
 ├── commands/
-│   ├── precommit.md            ← /precommit slash command
+│   ├── precommit.md            ← /precommit slash command (documents output format + stop-guard contract)
+│   ├── precommit.sh            ← /precommit execution script (tech-stack detection → lint/build/test; outputs PRECOMMIT_STATUS=)
 │   ├── plan.md                 ← /plan design planning command (+ ticket decomposition, CONTEXT.md glossary)
 │   ├── next-ticket.md          ← /next-ticket pick up next unblocked ticket (one slice per session)
-│   └── handoff.md              ← /handoff compact resume file before /clear (local-only, git-ignored)
+│   ├── handoff.md              ← /handoff compact resume file before /clear (local-only, git-ignored)
+│   ├── prompt.md               ← /prompt guided wizard: collects type/goal/files/scope/done-when, builds AI-ready task prompt via prompt-template.sh
+│   └── prompt-template.sh      ← shell template emitter for /prompt (feature|bugfix|refactor skeletons; kept out of .md to avoid loading all templates into context)
 ├── skills/
 │   ├── git-push.md             ← automatic GitLab/GitHub push
-│   └── ground.md               ← /ground pre-implementation grounding check
+│   ├── ground.md               ← /ground pre-implementation grounding check
+│   ├── parallel-design-agents.md ← multi-agent workflow to explore different design options
+│   └── preflight.md            ← environment verification checklist before starting work
 ├── hooks/
 │   ├── hooks.json              ← hook event declarations
 │   ├── claude/
@@ -157,10 +162,10 @@ Ran but FAIL? Still cannot stop.
 │   │   ├── context-budget-guard.sh ← Codex advisory (reminds to start fresh; PreToolUse/Bash only)
 │   │   └── handoff-reminder.sh ← Codex SessionStart hook after /clear
 │   ├── agy/
-│   │   ├── stop-guard.sh       ← Antigravity CLI Stop event hook
-│   │   ├── grounding-guard.sh  ← Antigravity grounding hook (advisory)
+│   │   ├── stop-guard.sh       ← Antigravity CLI AfterAgent hook (blocks if PRECOMMIT_STATUS=PASS absent)
+│   │   ├── grounding-guard.sh  ← Antigravity BeforeTool hook (blocks first un-grounded edit; uses write_file|edit_file|create_file|replace_in_file)
 │   │   ├── context-budget-guard.sh ← Antigravity advisory (reminds to start fresh; AfterAgent)
-│   │   └── read-dedup-guard.sh ← Antigravity block via BeforeTool/read_file (EXPERIMENTAL — needs verification)
+│   │   └── read-dedup-guard.sh ← Antigravity BeforeTool/read_file dedup block (needs BeforeTool event verification — see §Verification below)
 │   └── shared/
 │       ├── complexity-guard.sh ← shared PreToolUse hook (all CLIs)
 │       └── branch-guard.sh     ← blocks edits/commits on master/main
@@ -286,3 +291,53 @@ echo 'export ENABLE_LSP_TOOL=1' >> ~/.zprofile
 - Adapters for Antigravity CLI and other AI CLIs
 - `/analyze-log` command (production issue diagnosis)
 - Support for additional tech stacks (Go, Python, etc.)
+
+---
+
+## §Verification — agy Hook Readiness Checklist
+
+### `hooks/agy/read-dedup-guard.sh`
+
+Status: **needs BeforeTool event verification**
+
+Two things to confirm before removing the "needs verification" label:
+
+1. **Does `BeforeTool` fire for `read_file`?**  
+   Trigger a full file read inside an agy session, then inspect the session
+   transcript or stderr for a block message. If `read-dedup-guard.sh` fires,
+   you'll see `⛔ read-dedup-guard:` on the second read of the same file.
+
+2. **Does `exit 2` deny the tool call?**  
+   If the second read is blocked (file read does not happen despite the attempt),
+   the deny path works. If it reads anyway, `exit 2` is not honoured for this
+   event — downgrade to advisory.
+
+Once both are confirmed ✅, remove "needs BeforeTool event verification" from the
+project structure entry above and from the file header comment.
+
+### `hooks/agy/grounding-guard.sh`
+
+Status: **blocking — tool names taken from agy/stop-guard.sh**
+
+The edit tool names (`write_file|edit_file|create_file|replace_in_file`) are
+sourced from the existing `agy/stop-guard.sh`, which was written against the
+real agy transcript. The grounding-guard uses the same list.
+
+If a new session is blocked on the first edit despite no grounding having been
+done, the hook is working. If the block never fires, check that the `BeforeTool`
+event is registered for these tool names in the agy settings file.
+
+---
+
+## §CLI Feature Gaps
+
+### `handoff-reminder.sh` — agy and Codex
+
+**agy** does not have a `SessionStart` event equivalent to Claude Code's
+`source=clear` signal. This means there is no reliable way to detect that a new
+session was started from `/clear` vs a fresh start. `handoff-reminder.sh` is
+therefore **not implemented for agy** — the feature is inherently
+Claude Code-specific.
+
+If agy adds a post-clear session lifecycle event in the future, port
+`hooks/claude/handoff-reminder.sh` using the same pattern.

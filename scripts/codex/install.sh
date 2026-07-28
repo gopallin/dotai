@@ -70,10 +70,25 @@ echo "✅ TUI status line    → $CONFIG_FILE"
 # ── 3. Commands (Codex custom prompts: ~/.codex/prompts/*.md → /name) ─────────
 
 mkdir -p "$CODEX_DIR/prompts"
-for cmd in precommit plan next-ticket handoff; do
+for cmd in precommit plan next-ticket handoff prompt; do
   cp "$DOTAI_DIR/commands/$cmd.md" "$CODEX_DIR/prompts/$cmd.md"
+done
+
+# Replace hardcoded .claude path with .codex for Codex CLI
+sed -i '' 's|\.claude/commands/precommit\.sh|\.codex/prompts/precommit\.sh|g' "$CODEX_DIR/prompts/precommit.md" 2>/dev/null || \
+sed -i 's|\.claude/commands/precommit\.sh|\.codex/prompts/precommit\.sh|g' "$CODEX_DIR/prompts/precommit.md"
+
+# Copy helper scripts
+cp "$DOTAI_DIR/commands/precommit.sh" "$CODEX_DIR/prompts/precommit.sh"
+chmod +x "$CODEX_DIR/prompts/precommit.sh"
+cp "$DOTAI_DIR/commands/prompt-template.sh" "$CODEX_DIR/prompts/prompt-template.sh"
+chmod +x "$CODEX_DIR/prompts/prompt-template.sh"
+
+for cmd in precommit plan next-ticket handoff prompt; do
   echo "✅ /$cmd prompt → $CODEX_DIR/prompts/$cmd.md"
 done
+echo "✅ /precommit script  → $CODEX_DIR/prompts/precommit.sh"
+echo "✅ /prompt template   → $CODEX_DIR/prompts/prompt-template.sh"
 
 # ── 4. Install hook scripts ───────────────────────────────────────────────────
 
@@ -206,6 +221,7 @@ echo "  /plan            structured design planning (save to plan.md, optionally
 echo "  /next-ticket     pick up the next unblocked ticket (one context-sized slice per session)"
 echo "  /handoff         save a compact resume file before starting fresh (local-only, never committed)"
 echo "  /precommit       run lint + build + test"
+echo "  /prompt          turn a rough idea into a structured, AI-ready task prompt"
 echo "  statusline       model · context · token usage · rate limits · git branch"
 echo "  stop-guard       auto-blocks stopping if verifications incomplete"
 echo "  branch-guard     prevents accidental pushes to master/main"
@@ -213,3 +229,4 @@ echo "  glab-guard       blocks glab CLI, directs to curl + \$GITLAB_TOKEN + jq"
 echo "  grounding-guard  auto-blocks the first code edit until /ground passes"
 echo "  context-budget-guard advisory: reminds to start fresh when the session grows large"
 echo "  handoff-reminder after /clear: offers /resume + /handoff or transcript reconstruction"
+
