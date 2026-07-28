@@ -35,6 +35,10 @@ mkdir -p "$CLAUDE_DIR/commands"
 cp "$DOTAI_DIR/commands/precommit.md" "$CLAUDE_DIR/commands/precommit.md"
 echo "✅ /precommit command → $CLAUDE_DIR/commands/precommit.md"
 
+cp "$DOTAI_DIR/commands/precommit.sh" "$CLAUDE_DIR/commands/precommit.sh"
+chmod +x "$CLAUDE_DIR/commands/precommit.sh"
+echo "✅ /precommit script  → $CLAUDE_DIR/commands/precommit.sh"
+
 cp "$DOTAI_DIR/commands/plan.md" "$CLAUDE_DIR/commands/plan.md"
 echo "✅ /plan command      → $CLAUDE_DIR/commands/plan.md"
 
