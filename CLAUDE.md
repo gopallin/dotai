@@ -150,11 +150,12 @@ Ran but FAIL? Still cannot stop.
 │   │   ├── grounding-guard.sh  ← Claude PreToolUse hook (blocks first un-grounded edit)
 │   │   ├── read-dedup-guard.sh ← Claude PreToolUse hook (blocks full re-reads of files already in context)
 │   │   ├── context-budget-guard.sh ← Claude PreToolUse hook (advisory: reminds to /clear when session grows large)
-│   │   └── handoff-reminder.sh ← Claude SessionStart hook (after /clear: offer /resume+/handoff or transcript rebuild; no codex/agy equivalent event)
+│   │   └── handoff-reminder.sh ← Claude SessionStart hook (after /clear: offer /resume+/handoff or transcript rebuild)
 │   ├── codex/
 │   │   ├── stop-guard.sh       ← Codex CLI Stop event hook
-│   │   ├── grounding-guard.sh  ← Codex grounding hook (advisory)
-│   │   └── context-budget-guard.sh ← Codex advisory (reminds to start fresh; PreToolUse/Bash only)
+│   │   ├── grounding-guard.sh  ← Codex PreToolUse hook (blocks first un-grounded apply_patch)
+│   │   ├── context-budget-guard.sh ← Codex advisory (reminds to start fresh; PreToolUse/Bash only)
+│   │   └── handoff-reminder.sh ← Codex SessionStart hook after /clear
 │   ├── agy/
 │   │   ├── stop-guard.sh       ← Antigravity CLI Stop event hook
 │   │   ├── grounding-guard.sh  ← Antigravity grounding hook (advisory)

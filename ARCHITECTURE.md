@@ -194,14 +194,13 @@ JSON: `session_id`, `transcript_path`, `tool_name`, `tool_input`).
 
 | Hook | Claude Code | Codex CLI | Antigravity CLI (agy) |
 |---|---|---|---|
-| `context-budget-guard` (advisory) | PreToolUse (broad) | PreToolUse/`Bash` only¹ | AfterAgent (`*`) |
-| `read-dedup-guard` (blocks reads) | PreToolUse/`Read` ✅ | **Not possible**² | BeforeTool/`read_file` ⚠️ experimental³ |
+| `context-budget-guard` (advisory) | PreToolUse (broad) | PreToolUse（目前安裝於 `Bash`）¹ | AfterAgent (`*`) |
+| `read-dedup-guard` (blocks reads) | PreToolUse/`Read` ✅ | **內建讀檔工具 coverage 未驗證**² | BeforeTool/`read_file` ⚠️ experimental³ |
 
-1. Codex `PreToolUse` fires only for Bash / apply_patch / MCP, so the advisory
-   only re-checks on shell-tool turns.
-2. Codex `PreToolUse` does not intercept built-in file reads at all — there is no
-   event to deny and no file path delivered, so `read-dedup-guard` cannot exist on
-   Codex in any form (source: developers.openai.com/codex/hooks).
+1. Codex `PreToolUse` 可攔 Bash、`apply_patch`、MCP 與其他 local function tools；
+   本專案的 context-budget guard 目前只註冊於 `Bash`。
+2. Codex 是否把其內建讀檔工具交給 hook，必須在目標版本實測；未確認前不安裝
+   read-dedup guard，也不宣稱它不可能實作。
 3. agy `BeforeTool` can deny (exit 2 / `decision:"deny"`) and matches tool
    names by regex, but it is **unverified** that it fires for the built-in
    `read_file` tool — confirm empirically before relying on the block. The agy
@@ -239,7 +238,8 @@ description: What the skill does
 **Purpose:** Slash commands available across all CLIs.
 
 **Examples:**
-- **/plan** — Structured design planning workflow (Claude Code only)
+- **/plan** — Structured design planning workflow（Codex 以 `/prompts:plan` 呼叫，
+  不與內建 `/plan` mode 衝突）
 - **/precommit** — Lint + build + test pipeline
 
 ---
@@ -259,7 +259,7 @@ description: What the skill does
 
 ---
 
-### 8. Status Line (Claude Code only)
+### 8. Custom Status Line (Claude Code only)
 
 **Location:** `~/dotai/statusline/claude/statusline.sh`
 
@@ -281,7 +281,10 @@ Reset times (`↺`) are rendered in local time (= `/usage`'s timezone): the 5-ho
 Opus · ctx [███░░░░░] 86k/200k 43% · 5h [██░░░░░░] 24% ↺2pm · 7d [███░░░░░] 41% ↺Jun 14 1pm
 ```
 
-**CLI parity:** Claude Code and Antigravity CLI (agy) both support the status line. Codex status lines use different formats and stdin schemas; its adapter would live under `statusline/codex/` when added.
+**CLI parity:** Claude Code and Antigravity CLI (agy) support this custom command
+statusline. Codex provides a native configurable `/statusline`（model、context、token
+usage、rate limits、git 等）；`scripts/codex/install.sh` writes its selected items to
+`~/.codex/config.toml`，但不能直接沿用本腳本的 stdin schema。
 
 **Distribution:** Copied to `~/.claude/statusline.sh` by `scripts/claude/install.sh`, which also registers the `statusLine` command in `settings.json` (idempotent).
 
