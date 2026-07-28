@@ -4,8 +4,8 @@
 #
 # What this does:
 #   1. Syncs global rules from dotai/GLOBAL_RULES.md to ~/.codex/AGENTS.md
-#   2. Copies stop-guard-codex.sh to ~/.codex/hooks/
-#   3. Registers Stop hook in ~/.codex/hooks.json
+#   2. Copies Codex hook scripts to ~/.codex/hooks/
+#   3. Registers lifecycle hooks in ~/.codex/hooks.json
 
 set -euo pipefail
 
@@ -28,7 +28,46 @@ if [ -f "$DOTAI_DIR/GLOBAL_RULES.md" ]; then
   echo "✅ Global Rules       → $CODEX_DIR/AGENTS.md"
 fi
 
-# ── 2. Commands (Codex custom prompts: ~/.codex/prompts/*.md → /name) ─────────
+# ── 2. TUI status line ───────────────────────────────────────────────────────
+
+CONFIG_FILE="$CODEX_DIR/config.toml"
+STATUS_LINE='status_line = ["model-with-reasoning", "context-used", "used-tokens", "total-input-tokens", "total-output-tokens", "five-hour-limit", "weekly-limit", "git-branch"]'
+touch "$CONFIG_FILE"
+CONFIG_TMP=$(mktemp "$CODEX_DIR/config.toml.XXXXXX")
+
+awk -v status_line="$STATUS_LINE" '
+  /^\[tui\][[:space:]]*$/ {
+    tui_seen = 1
+    in_tui = 1
+    print
+    next
+  }
+  in_tui && /^\[/ {
+    if (!status_line_written) print status_line
+    status_line_written = 1
+    in_tui = 0
+    print
+    next
+  }
+  in_tui && /^[[:space:]]*status_line[[:space:]]*=/ {
+    if (!status_line_written) print status_line
+    status_line_written = 1
+    next
+  }
+  { print }
+  END {
+    if (in_tui && !status_line_written) print status_line
+    if (!tui_seen && !in_tui) {
+      print ""
+      print "[tui]"
+      print status_line
+    }
+  }
+' "$CONFIG_FILE" > "$CONFIG_TMP"
+mv "$CONFIG_TMP" "$CONFIG_FILE"
+echo "✅ TUI status line    → $CONFIG_FILE"
+
+# ── 3. Commands (Codex custom prompts: ~/.codex/prompts/*.md → /name) ─────────
 
 mkdir -p "$CODEX_DIR/prompts"
 for cmd in precommit plan next-ticket handoff; do
@@ -36,7 +75,7 @@ for cmd in precommit plan next-ticket handoff; do
   echo "✅ /$cmd prompt → $CODEX_DIR/prompts/$cmd.md"
 done
 
-# ── 3. Install hook scripts ───────────────────────────────────────────────────
+# ── 4. Install hook scripts ───────────────────────────────────────────────────
 
 mkdir -p "$CODEX_DIR/hooks/shared"
 cp "$DOTAI_DIR/hooks/codex/stop-guard.sh" "$CODEX_DIR/hooks/stop-guard.sh"
@@ -51,12 +90,22 @@ cp "$DOTAI_DIR/hooks/shared/glab-guard.sh" "$CODEX_DIR/hooks/shared/glab-guard.s
 chmod +x "$CODEX_DIR/hooks/shared/glab-guard.sh"
 echo "✅ shared/glab-guard.sh    → $CODEX_DIR/hooks/shared/glab-guard.sh"
 
+# grounding-guard (blocks the first code edit until /ground passes)
+cp "$DOTAI_DIR/hooks/codex/grounding-guard.sh" "$CODEX_DIR/hooks/grounding-guard.sh"
+chmod +x "$CODEX_DIR/hooks/grounding-guard.sh"
+echo "✅ grounding-guard.sh      → $CODEX_DIR/hooks/grounding-guard.sh"
+
 # context-budget-guard (advisory: reminds to start fresh when session grows large)
 cp "$DOTAI_DIR/hooks/codex/context-budget-guard.sh" "$CODEX_DIR/hooks/context-budget-guard.sh"
 chmod +x "$CODEX_DIR/hooks/context-budget-guard.sh"
 echo "✅ context-budget-guard.sh → $CODEX_DIR/hooks/context-budget-guard.sh"
 
-# ── 4. Register Stop hook in hooks.json ──────────────────────────────────────
+# handoff-reminder (SessionStart on /clear)
+cp "$DOTAI_DIR/hooks/codex/handoff-reminder.sh" "$CODEX_DIR/hooks/handoff-reminder.sh"
+chmod +x "$CODEX_DIR/hooks/handoff-reminder.sh"
+echo "✅ handoff-reminder.sh     → $CODEX_DIR/hooks/handoff-reminder.sh"
+
+# ── 5. Register hooks in hooks.json ──────────────────────────────────────────
 
 HOOKS_FILE="$CODEX_DIR/hooks.json"
 
@@ -113,9 +162,34 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
           "timeout": 5
         }
       ]
+    },
+    {
+      "matcher": "apply_patch",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash \($home)/.codex/hooks/grounding-guard.sh",
+          "timeout": 10
+        }
+      ]
     }
   ] + (.hooks.PreToolUse // [] | map(select(
-    (.hooks[0].command | test("branch-guard\\.sh$|context-budget-guard\\.sh$|glab-guard\\.sh$")) | not
+    (.hooks[0].command | test("branch-guard\\.sh$|context-budget-guard\\.sh$|glab-guard\\.sh$|grounding-guard\\.sh$")) | not
+  )))) |
+  # Register SessionStart hook for handoff reminders after /clear
+  .hooks.SessionStart = ([
+    {
+      "matcher": "clear",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash \($home)/.codex/hooks/handoff-reminder.sh",
+          "timeout": 10
+        }
+      ]
+    }
+  ] + (.hooks.SessionStart // [] | map(select(
+    (.hooks[0].command | test("handoff-reminder\\.sh$")) | not
   ))))
 ')
 
@@ -132,7 +206,10 @@ echo "  /plan            structured design planning (save to plan.md, optionally
 echo "  /next-ticket     pick up the next unblocked ticket (one context-sized slice per session)"
 echo "  /handoff         save a compact resume file before starting fresh (local-only, never committed)"
 echo "  /precommit       run lint + build + test"
+echo "  statusline       model · context · token usage · rate limits · git branch"
 echo "  stop-guard       auto-blocks stopping if verifications incomplete"
 echo "  branch-guard     prevents accidental pushes to master/main"
 echo "  glab-guard       blocks glab CLI, directs to curl + \$GITLAB_TOKEN + jq"
+echo "  grounding-guard  auto-blocks the first code edit until /ground passes"
 echo "  context-budget-guard advisory: reminds to start fresh when the session grows large"
+echo "  handoff-reminder after /clear: offers /resume + /handoff or transcript reconstruction"

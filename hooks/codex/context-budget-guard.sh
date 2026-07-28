@@ -8,11 +8,10 @@
 # Codex contract: emit {"decision":"allow"} on stdout (mirrors codex/grounding-
 # guard.sh) and the advisory on stderr; never blocks.
 #
-# COVERAGE CAVEAT: Codex's PreToolUse fires only for Bash / apply_patch / MCP
-# calls (developers.openai.com/codex/hooks), so this is registered on "Bash" and
-# only re-checks size on shell-tool turns. Sessions with few Bash calls get fewer
-# reminders. The transcript/rollout format is documented as unstable — verify
-# against the installed Codex version before relying on it.
+# COVERAGE CAVEAT: this guard is registered on "Bash", so it only re-checks size
+# on shell-tool turns. Sessions with few Bash calls get fewer reminders. The
+# transcript/rollout format is documented as unstable — verify against the
+# installed Codex version before relying on it.
 
 INPUT=$(cat)
 TRANSCRIPT=$(echo "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)

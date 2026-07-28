@@ -68,4 +68,4 @@ When the handoff-reminder hook (or the user) asks you to rebuild a handoff from 
 
 - If working inside the `/plan` ticket flow and a ticket was **completed**, INDEX.md is the handoff — this command is for mid-ticket interruptions and non-ticketed work.
 - Stale handoff files are harmless: git-ignored, overwritten on next use.
-- The handoff-reminder hook (SessionStart on `/clear`, Claude Code only) is the safety net for forgotten handoffs: it offers `/resume` + `/handoff` (high fidelity) or reconstruction (cheap). Proactive `/handoff` before `/clear` still beats both.
+- The handoff-reminder hook (SessionStart on `/clear` in Claude Code and Codex) is the safety net for forgotten handoffs: it offers `/resume` + `/handoff` (high fidelity) or reconstruction (cheap). Proactive `/handoff` before `/clear` still beats both.
