@@ -60,6 +60,21 @@ on IDs — **verify the real values before writing code**, do not assume them:
 
 If the change touches **no** data, state "No data dependency" and move on.
 
+### Step 4.5 — Reviewer Rules Alignment Check (L1 / L2 / L3)
+
+Before emitting PASS, verify that your planned implementation complies with the Reviewer Rules:
+
+1. **L1 (Architecture & Parity):**
+   - Use single public method `exec()`, constructor injection, state transitions via `transitionTo()`. No business logic in controllers.
+   - **Migration Parity:** If adding/dropping columns on `shipments`, `shipment_items`, `batches`, `batch_items`, `b2b_batches`, or `b2b_batch_items`, ensure matching changes to `backup_*` mirror tables!
+2. **L2 (Stack Best Practices):**
+   - Laravel: Avoid N+1 queries, keep Eloquent efficient.
+   - NestJS / Vue 3: Standard DI and Composition API conventions.
+   - Security: Parameterized queries, input sanitization, protect PII.
+3. **L3 (Production Readiness & Concurrency):**
+   - Concurrency: Protect read-modify-write operations on shared state (`stock.usage`, counters, `picking_priority`) using Redis mutex locks (`getRedisLock`/`releaseRedisLock`, key `check_capacity`).
+   - Idempotency & Observability: Ensure jobs/listeners are idempotent and log key operations.
+
 ### Step 5 — State assumptions and confidence
 
 List the assumptions you are making and your confidence. If confidence is below 100%,
