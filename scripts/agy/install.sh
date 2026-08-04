@@ -62,10 +62,23 @@ echo "✅ /prompt template   → $GEMINI_DIR/commands/prompt-template.sh"
 
 # ── 3. Skills ────────────────────────────────────────────────────────────────
 
-mkdir -p "$GEMINI_DIR/skills"
+# agy's global customization root is ~/.gemini/config/ (see the built-in
+# agy-customizations skill), and skills must be <root>/skills/<name>/SKILL.md.
+# Earlier dotai versions wrote flat .md into ~/.gemini/skills/ — wrong on both
+# counts, so nothing was ever discovered.
+AGY_SKILLS="$GEMINI_DIR/config/skills"
+mkdir -p "$AGY_SKILLS"
 if [ -d "$DOTAI_DIR/skills" ]; then
-  cp "$DOTAI_DIR/skills"/*.md "$GEMINI_DIR/skills/" 2>/dev/null || true
-  echo "✅ Skills              → $GEMINI_DIR/skills/"
+  rm -rf "$GEMINI_DIR/skills"        # legacy location
+  rm -f "$AGY_SKILLS"/*.md           # legacy flat layout
+  for skill_dir in "$DOTAI_DIR/skills"/*/; do
+    [ -f "$skill_dir/SKILL.md" ] || continue
+    name=$(basename "$skill_dir")
+    rm -rf "$AGY_SKILLS/$name"
+    mkdir -p "$AGY_SKILLS/$name"
+    cp -R "$skill_dir." "$AGY_SKILLS/$name/"
+    echo "✅ /$name skill → $AGY_SKILLS/$name/SKILL.md"
+  done
 fi
 
 # ── 2. Install hook scripts ───────────────────────────────────────────────────
@@ -248,5 +261,5 @@ echo "  branch-guard     (available for manual invoke; auto-trigger requires Pre
 echo "  glab-guard       (available for manual invoke; auto-trigger requires BeforeTool support for run_command)"
 echo "  statusline       model · context-usage bar · /usage rate-limit bars"
 echo "  rules/           AGENTS.md (global) and laravel.md · vue.md · node.md (path-filtered)"
-echo "  skills/          git-push (auto-detect GitLab/GitHub + Keychain auth)"
+echo "  skills/          ship · ground · git-push · preflight · parallel-design-agents"
 echo ""

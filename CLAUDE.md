@@ -143,11 +143,12 @@ Ran but FAIL? Still cannot stop.
 │   ├── handoff.md              ← /handoff compact resume file before /clear (local-only, git-ignored)
 │   ├── prompt.md               ← /prompt guided wizard: collects type/goal/files/scope/done-when, builds AI-ready task prompt via prompt-template.sh
 │   └── prompt-template.sh      ← shell template emitter for /prompt (feature|bugfix|refactor skeletons; kept out of .md to avoid loading all templates into context)
-├── skills/
-│   ├── git-push.md             ← automatic GitLab/GitHub push
-│   ├── ground.md               ← /ground pre-implementation grounding check
-│   ├── parallel-design-agents.md ← multi-agent workflow to explore different design options
-│   └── preflight.md            ← environment verification checklist before starting work
+├── skills/                     ← one dir per skill; all three CLIs require <name>/SKILL.md
+│   ├── git-push/SKILL.md       ← automatic GitLab/GitHub push
+│   ├── ground/SKILL.md         ← /ground pre-implementation grounding check
+│   ├── parallel-design-agents/SKILL.md ← multi-agent workflow to explore different design options
+│   ├── preflight/SKILL.md      ← environment verification checklist before starting work
+│   └── ship/SKILL.md           ← /ship test → L1/L2/L3 review → commit → push → open MR
 ├── hooks/
 │   ├── hooks.json              ← hook event declarations
 │   ├── claude/
@@ -195,6 +196,20 @@ bash install.sh --all
 - Copies files to recognized locations (`~/.claude/`, `~/.codex/`, `~/.gemini/`)
 - Installs commands, skills, hooks, and rules for the selected CLI
 - Merges hook configurations into settings files
+
+**Skill layout — all three CLIs agree, and a wrong layout fails silently:**
+
+| CLI | Skills root | Verified by |
+|---|---|---|
+| Claude Code | `~/.claude/skills/<name>/SKILL.md` | skill list reload |
+| Codex | `~/.codex/skills/<name>/SKILL.md` | `codex exec` skill list |
+| Antigravity | `~/.gemini/config/skills/<name>/SKILL.md` | `agy -p` skill list |
+
+A flat `skills/<name>.md` is **never discovered** — no warning, the skill just
+does not exist. agy's global root is `~/.gemini/config/`, **not** `~/.gemini/`
+(the `agy` binary carries the template `{appDataDir}/skills/{skill_name}/SKILL.md`).
+`tests/skills-install.test.sh` locks all three layouts down, including cleanup of
+the legacy flat files.
 
 ---
 

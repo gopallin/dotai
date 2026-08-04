@@ -57,10 +57,19 @@ echo "✅ /prompt template   → $CLAUDE_DIR/commands/prompt-template.sh"
 
 # ── 2b. Skills ────────────────────────────────────────────────────────────────
 
+# Skill discovery requires skills/<name>/SKILL.md — a flat skills/<name>.md is
+# silently ignored, which is how ship/ground/git-push went missing for a while.
 mkdir -p "$CLAUDE_DIR/skills"
 if [ -d "$DOTAI_DIR/skills" ]; then
-  cp "$DOTAI_DIR/skills"/*.md "$CLAUDE_DIR/skills/" 2>/dev/null || true
-  echo "✅ Skills              → $CLAUDE_DIR/skills/"
+  rm -f "$CLAUDE_DIR/skills"/*.md   # drop the never-discovered flat layout
+  for skill_dir in "$DOTAI_DIR/skills"/*/; do
+    [ -f "$skill_dir/SKILL.md" ] || continue
+    name=$(basename "$skill_dir")
+    rm -rf "$CLAUDE_DIR/skills/$name"
+    mkdir -p "$CLAUDE_DIR/skills/$name"
+    cp -R "$skill_dir." "$CLAUDE_DIR/skills/$name/"
+    echo "✅ /$name skill → $CLAUDE_DIR/skills/$name/SKILL.md"
+  done
 fi
 
 # ── 3. hook scripts ───────────────────────────────────────────────────────────
@@ -280,4 +289,4 @@ echo "  branch-guard     prevents accidental pushes to master/main"
 echo "  glab-guard       blocks glab CLI, directs to curl + \$GITLAB_TOKEN + jq"
 echo "  statusline       model · context-usage bar · /usage rate-limit bars"
 echo "  rules/           laravel.md · vue.md · node.md (path-filtered)"
-echo "  skills/          git-push (auto-detect GitLab/GitHub + Keychain auth)"
+echo "  skills/          ship · ground · git-push · preflight · parallel-design-agents"

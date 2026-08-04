@@ -112,8 +112,8 @@ dotai/ (source)
 │   ├── codex/stop-guard.sh
 │   └── agy/stop-guard.sh
 ├── skills/
-│   ├── git-push.md
-│   ├── preflight.md
+│   ├── git-push/SKILL.md
+│   ├── preflight/SKILL.md
 │   └── ...
 └── commands/
     ├── /plan
@@ -127,7 +127,7 @@ dotai/ (source)
 │   ├── shared/branch-guard.sh
 │   ├── claude/stop-guard.sh
 │   └── settings.json (hook registration)
-├── skills/ (git-push.md, preflight.md, ...)
+├── skills/ (git-push/SKILL.md, preflight/SKILL.md, ...)
 ├── commands/ (/plan, /precommit)
 └── rules/ (vue.md, node.md, laravel.md)
 ```
@@ -144,7 +144,7 @@ dotai/ (source)
 1. Copy GLOBAL_RULES.md → target CLAUDE.md / AGENTS.md (in config/ for agy)
 2. Copy hooks/ → target hooks/
 3. Register hooks in settings.json / hooks.json
-4. Copy skills/ → target skills/
+4. Copy skills/<name>/ → target skills/<name>/ (agy: config/skills/<name>/)
 5. Copy commands/ → target commands/
 6. Copy rules/ → target rules/
 
@@ -216,10 +216,10 @@ JSON: `session_id`, `transcript_path`, `tool_name`, `tool_input`).
 **Purpose:** Reusable automation patterns for common tasks.
 
 **Examples:**
-- **git-push.md** — Auto-detect GitLab/GitHub, apply Keychain token
-- **preflight.md** — Environment audit (branch, git state, env vars, MCP)
+- **git-push/SKILL.md** — Auto-detect GitLab/GitHub, apply Keychain token
+- **preflight/SKILL.md** — Environment audit (branch, git state, env vars, MCP)
 
-**Format:** Markdown with YAML frontmatter
+**Format:** one directory per skill, containing `SKILL.md` with YAML frontmatter
 ```yaml
 ---
 name: skill-name
@@ -227,7 +227,10 @@ description: What the skill does
 ---
 ```
 
-**Distribution:** Copied to `~/.claude/skills/`, `~/.codex/skills/`, etc.
+**Distribution:** copied as `<name>/SKILL.md` into `~/.claude/skills/`,
+`~/.codex/skills/`, and `~/.gemini/config/skills/` (agy's global root is
+`config/`, not `~/.gemini/`). A flat `<name>.md` is silently ignored by every
+CLI — see `tests/skills-install.test.sh`.
 
 ---
 
@@ -431,9 +434,11 @@ Distribute via `install.sh` after committing.
 
 ### Add New Skill
 
-1. Create `~/dotai/skills/new-skill.md`
-2. Follow git-push.md format (YAML frontmatter + Markdown docs)
-3. Run `install.sh` to distribute to `~/.claude/skills/`
+1. Create `~/dotai/skills/new-skill/SKILL.md` (the directory name must match `name:`)
+2. Follow git-push/SKILL.md format (YAML frontmatter + Markdown docs)
+3. Run `install.sh` to distribute to `~/.claude/skills/new-skill/SKILL.md`
+4. Run `bash tests/skills-install.test.sh` — it derives the expected skill list
+   from `skills/`, so it covers the new one with no edits
 
 ### Add New Rule
 
