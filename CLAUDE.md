@@ -163,10 +163,12 @@ Ran but FAIL? Still cannot stop.
 │   │   ├── context-budget-guard.sh ← Codex advisory (reminds to start fresh; PreToolUse/Bash only)
 │   │   └── handoff-reminder.sh ← Codex SessionStart hook after /clear
 │   ├── agy/
-│   │   ├── stop-guard.sh       ← Antigravity CLI AfterAgent hook (blocks if PRECOMMIT_STATUS=PASS absent)
-│   │   ├── grounding-guard.sh  ← Antigravity BeforeTool hook (blocks first un-grounded edit; uses write_file|edit_file|create_file|replace_in_file)
-│   │   ├── context-budget-guard.sh ← Antigravity advisory (reminds to start fresh; AfterAgent)
-│   │   └── read-dedup-guard.sh ← Antigravity BeforeTool/read_file dedup block (needs BeforeTool event verification — see §Verification below)
+│   │   ├── hooks.json          ← agy named-hook registration, installed to ~/.gemini/config/hooks.json
+│   │   ├── stop-guard.sh       ← agy Stop hook (blocks the stop if PRECOMMIT_STATUS=PASS absent)
+│   │   ├── grounding-guard.sh  ← agy PreToolUse (write_to_file|replace_file_content|edit_notebook)
+│   │   ├── context-budget-guard.sh ← agy PreInvocation advisory (injects an ephemeralMessage)
+│   │   ├── read-dedup-guard.sh ← agy PreToolUse/view_file dedup block
+│   │   └── shared-guard-adapter.sh ← translates agy's JSON contract ↔ the shared guards' exit codes
 │   └── shared/
 │       ├── complexity-guard.sh ← shared PreToolUse hook (all CLIs)
 │       └── branch-guard.sh     ← blocks edits/commits on master/main
@@ -309,38 +311,112 @@ echo 'export ENABLE_LSP_TOOL=1' >> ~/.zprofile
 
 ---
 
-## §Verification — agy Hook Readiness Checklist
+## §agy Hook Contract
 
-### `hooks/agy/read-dedup-guard.sh`
+agy's hook system is **not** the Claude/Codex one. An earlier dotai relied on the
+Claude-shaped assumptions and every agy guard was silently inert as a result.
 
-Status: **needs BeforeTool event verification**
+Each claim below is marked with how it is known: **[probed]** = observed in a live
+`agy -p` session, **[binary]** = string extracted from the `agy` executable,
+**[doc]** = agy's built-in `agy-customizations` guide only. Treat `[doc]`-only rows
+as unverified.
 
-Two things to confirm before removing the "needs verification" label:
+**Where config lives.** agy's global customization root is `~/.gemini/config/`.
 
-1. **Does `BeforeTool` fire for `read_file`?**  
-   Trigger a full file read inside an agy session, then inspect the session
-   transcript or stderr for a block message. If `read-dedup-guard.sh` fires,
-   you'll see `⛔ read-dedup-guard:` on the second read of the same file.
+| What | Path | Verified by |
+|---|---|---|
+| Lifecycle hooks | `~/.gemini/config/hooks.json` | **[probed]** a `Stop` hook there fires |
+| Skills (= slash commands) | `~/.gemini/config/skills/<name>/SKILL.md` | **[probed]** `/dotai-probe` skill was invocable; **[binary]** `{appDataDir}/skills/{skill_name}/SKILL.md` |
+| Global rules | `~/.gemini/config/AGENTS.md` | **[doc]** |
 
-2. **Does `exit 2` deny the tool call?**  
-   If the second read is blocked (file read does not happen despite the attempt),
-   the deny path works. If it reads anyway, `exit 2` is not honoured for this
-   event — downgrade to advisory.
+`antigravity-cli/settings.json` `.hooks.*` is **not** read: an `AfterAgent` probe
+registered there did not fire in the same run where the `config/hooks.json` `Stop`
+probe did. `settings.json` is still used for `.statusLine`.
 
-Once both are confirmed ✅, remove "needs BeforeTool event verification" from the
-project structure entry above and from the file header comment.
+**Event names** — only `PreToolUse`, `PostToolUse`, `PreInvocation`,
+`PostInvocation`, `Stop` exist **[doc]**; `PreToolUse` and `Stop` **[probed]** to
+fire. `AfterAgent` and `BeforeTool` **do not exist** — that is what the old
+`read-dedup-guard` "needs BeforeTool verification" note was really asking about,
+and the answer is that the event was never real.
 
-### `hooks/agy/grounding-guard.sh`
+**Config shape.** Top-level keys are hook *names*, not events:
 
-Status: **blocking — tool names taken from agy/stop-guard.sh**
+```json
+{ "dotai-stop-guard": { "Stop": [ { "type": "command", "command": "…" } ] } }
+```
 
-The edit tool names (`write_file|edit_file|create_file|replace_in_file`) are
-sourced from the existing `agy/stop-guard.sh`, which was written against the
-real agy transcript. The grounding-guard uses the same list.
+`PreToolUse`/`PostToolUse` wrap handlers in `{matcher, hooks:[…]}`; the other
+three take a flat handler list.
 
-If a new session is blocked on the first edit despite no grounding having been
-done, the hook is working. If the block never fires, check that the `BeforeTool`
-event is registered for these tool names in the agy settings file.
+**I/O contract — this is the part that bites.** agy passes JSON on stdin and reads
+a JSON decision from **stdout**. The **exit code is ignored**, so a guard that
+writes stderr and `exit 2` fails *open*.
+
+| Event | Block with | Allow with |
+|---|---|---|
+| `PreToolUse` | `{"decision":"deny","reason":"…"}` **[doc]** | `{"decision":"allow"}` **[probed]** |
+| `Stop` | `{"decision":"continue","reason":"…"}` **[doc]** | any other decision **[probed]** |
+| `PreInvocation` | n/a — advise via `{"injectSteps":[{"ephemeralMessage":"…"}]}` **[doc]** | `{}` |
+
+stderr is never shown to the user or the model, so advisory guards must return
+their text as a `reason` or an `ephemeralMessage`.
+
+**Payload keys are camelCase; tool arg keys are PascalCase.**
+
+- Common: `conversationId`, `transcriptPath`, `workspacePaths`,
+  `artifactDirectoryPath`, `modelName`
+- `PreToolUse`: `toolCall.name`, `toolCall.args`, `stepIdx`
+- `Stop`: `terminationReason`, `executionNum`, `fullyIdle`, `error`
+
+**Tool names** **[probed]** (also **[binary]**: lowercased step type with the
+`CORTEX_STEP_TYPE_` prefix stripped):
+
+| Purpose | agy tool |
+|---|---|
+| create file | `write_to_file` |
+| edit in place | `replace_file_content` |
+| read file | `view_file`, `view_file_outline` |
+| shell | `run_command` |
+| list dir | `list_dir` |
+| search | `grep_search`, `code_search` |
+
+There is no `write_file`, `edit_file`, `create_file`, `replace_in_file`, or
+`read_file` — dotai matched those for a while and therefore matched nothing.
+
+`tests/agy-hook-contract.test.sh` pins all of the above; `tests/agy-install.test.sh`
+pins where the installer writes it.
+
+### Still unverified
+
+**The `deny` / `continue` block path itself.** Allow-path output was exercised live;
+a real block was not. The probe that tried it matched tool name `file_change`, which
+does not exist, so it never fired — and quota ran out before a retry with
+`write_to_file`. The shapes come from agy's documented contract. Re-run the probe
+below with `"matcher":"write_to_file"` and a `deny` decision to close this.
+
+`view_file` / `write_to_file` / `replace_file_content` **arg key names**. The
+pattern is PascalCase (`run_command`→`CommandLine`, `list_dir`→`DirectoryPath`,
+both observed), but the agy quota ran out mid-probe before the file tools were
+captured. The guards therefore accept a candidate list
+(`AbsolutePath`/`TargetFile`/`FilePath`/`Path`/…) and fail **open** on a miss, so
+a wrong key can only weaken the `*.md` skip and the read-dedup range escape hatch
+— it can never block a legitimate edit.
+
+To confirm in ~1 minute once quota resets, log one real payload:
+
+```bash
+cat > ~/.gemini/config/hooks.json <<'EOF'
+{"probe":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command",
+  "command":"cat >> /tmp/agy-args.jsonl; printf '\n' >> /tmp/agy-args.jsonl; printf '%s' '{\"decision\":\"allow\"}'"}]}]}}
+EOF
+cd /tmp && printf 'a\nb\n' > p.txt
+agy -p "Read p.txt then change 'b' to 'B' in place." --dangerously-skip-permissions
+jq -c '{tool:.toolCall.name, argKeys:(.toolCall.args|keys)}' /tmp/agy-args.jsonl | sort -u
+# then: rm ~/.gemini/config/hooks.json && bash install.sh --agy
+```
+
+Then narrow the candidate lists in `hooks/agy/grounding-guard.sh`,
+`read-dedup-guard.sh`, and `shared-guard-adapter.sh` to the real keys.
 
 ---
 
@@ -356,3 +432,12 @@ Claude Code-specific.
 
 If agy adds a post-clear session lifecycle event in the future, port
 `hooks/claude/handoff-reminder.sh` using the same pattern.
+
+### Commands — agy has no such concept
+
+agy's customization types are Rules, Skills, Plugins, Hooks, and MCP servers.
+There is no "commands" type; slash commands are resolved from **skills**. dotai's
+`/precommit`, `/plan`, `/next-ticket`, `/handoff`, and `/prompt` are therefore
+installed for agy as `~/.gemini/config/skills/<name>/SKILL.md`, with `name:`
+injected into the frontmatter when the source `.md` only carries `description:`.
+`~/.gemini/commands/` is removed on install — agy never read it.

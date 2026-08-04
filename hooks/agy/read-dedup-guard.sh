@@ -1,51 +1,58 @@
 #!/usr/bin/env bash
 #
-# read-dedup-guard.sh (agy CLI adapter — needs BeforeTool event verification)
-# Port of the Claude read-dedup-guard: blocks a full re-read of a file already
-# read this session, to stop re-billing the whole file's tokens every later turn.
+# read-dedup-guard.sh (agy CLI adapter — PreToolUse, BLOCKING)
 #
-# Status: logic is complete; two things need field-verification before this is
-# considered production-ready (see §Verification in CLAUDE.md):
-#   1. That the `BeforeTool` event actually FIRES for the built-in `read_file`
-#      tool (agy docs only show write_file/replace examples).
-#   2. That exit code 2 + stderr denies the call (the documented deny path).
-# If (1) does not fire, this hook is inert. If (2) does not block, downgrade
-# the exit 2 to exit 0 and log advisory only.
+# Blocks a full re-read of a file already read this session, so the whole file's
+# tokens are not re-billed on every later turn.
 #
-# Design difference vs the Claude version: instead of parsing a transcript,
-# this hook tracks already-read paths in a per-session marker file it maintains.
+# agy contract (verified against agy CLI — see CLAUDE.md §agy Hook Contract):
+#   event  : PreToolUse, matcher view_file  (agy's read tool is `view_file`, not
+#            `read_file`; and there is no "BeforeTool" event — the previous
+#            registration was inert, which is what §Verification was unsure about)
+#   stdout : {"decision":"deny","reason":"..."} blocks; {"decision":"allow"} permits.
 #
-# Escape hatch: pass offset/limit to read a range (always allowed). After editing
-# a file, re-read it with offset/limit — a plain full re-read stays blocked.
+# Instead of parsing a transcript, this tracks already-read paths in a
+# per-conversation marker file.
 #
-# Exit codes: 0 — allow; 2 — block (stderr becomes the deny reason).
+# Escape hatch: a ranged read is always allowed. After editing a file, re-read it
+# with a range — a plain full re-read stays blocked.
+
+allow() { printf '%s' '{"decision":"allow"}'; exit 0; }
+deny()  { jq -cn --arg r "$1" '{decision:"deny",reason:$r}'; exit 0; }
+
+command -v jq >/dev/null 2>&1 || { printf '%s' '{"decision":"allow"}'; exit 0; }
 
 INPUT=$(cat)
-TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)
-# agy's read_file uses `absolute_path`; accept file_path too for safety.
-FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.absolute_path // .tool_input.file_path // empty' 2>/dev/null)
-OFFSET=$(echo "$INPUT" | jq -r '.tool_input.offset // empty' 2>/dev/null)
-LIMIT=$(echo "$INPUT" | jq -r '.tool_input.limit // empty' 2>/dev/null)
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)
-SESSION_ID="${SESSION_ID:-${AGY_SESSION_ID:-unknown}}"
+TOOL_NAME=$(printf '%s' "$INPUT" | jq -r '.toolCall.name // empty' 2>/dev/null)
+SESSION_ID=$(printf '%s' "$INPUT" | jq -r '.conversationId // empty' 2>/dev/null)
+# Sanitised because it is interpolated into a /tmp path below (see grounding-guard).
+SESSION_ID=$(printf '%s' "$SESSION_ID" | tr -cd 'A-Za-z0-9._-')
+SESSION_ID="${SESSION_ID:-unknown}"
 
-# Only act on the read tool; never block anything else.
-[[ "$TOOL_NAME" != "read_file" ]] && exit 0
-[[ -z "$FILE_PATH" ]] && exit 0
+[[ "$TOOL_NAME" != "view_file" ]] && allow
 
-# A range read is exactly the desired behavior — and the escape hatch — allow it.
-[[ -n "$OFFSET" || -n "$LIMIT" ]] && exit 0
+# PascalCase args (verified pattern: run_command→CommandLine, list_dir→
+# DirectoryPath). The exact view_file key is not yet confirmed — accept the
+# plausible spellings; an unmatched key fails open rather than blocking wrongly.
+ARGS=$(printf '%s' "$INPUT" | jq -c '.toolCall.args // {}' 2>/dev/null)
+FILE_PATH=$(printf '%s' "$ARGS" | jq -r '
+  (.AbsolutePath // .TargetFile // .TargetFilePath // .FilePath // .Path // .File // empty)
+' 2>/dev/null)
+RANGE=$(printf '%s' "$ARGS" | jq -r '
+  (.StartLine // .StartLineOneIndexed // .Offset // .EndLine // .EndLineOneIndexed // .Limit // empty)
+' 2>/dev/null)
+
+[[ -z "$FILE_PATH" ]] && allow
+
+# A ranged read is the desired behavior — and the escape hatch — so allow it.
+[[ -n "$RANGE" ]] && allow
 
 MARKER="/tmp/dotai_agy_reads_${SESSION_ID}"
-touch "$MARKER" 2>/dev/null || exit 0   # cannot track — fail open
+touch "$MARKER" 2>/dev/null || allow   # cannot track — fail open
 
-# Already read this session → block the redundant full re-read.
 if grep -qxF "$FILE_PATH" "$MARKER" 2>/dev/null; then
-  echo "⛔ read-dedup-guard: \"$FILE_PATH\" was already read this session — its contents are already in context." >&2
-  echo "Reuse what is in context, or read a range with offset/limit instead of re-reading the whole file." >&2
-  exit 2
+  deny "\"$FILE_PATH\" was already read this session — its contents are already in context. Reuse what is in context, or read a line range instead of re-reading the whole file."
 fi
 
-# First read of this file this session — record it and allow.
 echo "$FILE_PATH" >> "$MARKER"
-exit 0
+allow

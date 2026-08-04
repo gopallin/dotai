@@ -1,41 +1,47 @@
 #!/usr/bin/env bash
 #
-# context-budget-guard.sh (agy CLI adapter — ADVISORY ONLY)
-# Mirror of the Claude context-budget-guard: reminds you to start fresh or split
-# the task once the session transcript grows large. Long sessions re-send their
-# whole context every turn, which usage analysis showed is ~96% of token cost.
+# context-budget-guard.sh (agy CLI adapter — PreInvocation, ADVISORY)
 #
-# agy contract: advisory on stderr, exit 0 (mirrors agy/grounding-guard.sh).
-# Registered on the AfterAgent event (matcher "*"), so it re-checks once per
-# agent turn — a natural rate limit, same role as Claude's Stop hook.
+# Reminds you to start fresh once the session transcript grows large. Long
+# sessions re-send their whole context every turn, which usage analysis showed is
+# ~96% of token cost.
 #
-# CAVEAT: the session transcript format is not documented as stable
-# (antigravity.google/docs/hooks). Verify against the installed
-# agy version before relying on it.
+# agy contract (verified against agy CLI — see CLAUDE.md §agy Hook Contract):
+#   event  : PreInvocation (flat handler list, no matcher). The old AfterAgent
+#            registration did not exist as an event, so this never ran.
+#   stdin  : JSON, camelCase — transcriptPath, conversationId, invocationNum.
+#   stdout : {"injectSteps":[{"ephemeralMessage":"..."}]} surfaces the advice to
+#            the model as a transient system message; {} says nothing.
+#            stderr is NOT read by agy, which is why the advice must go here.
+
+quiet() { printf '%s' '{}'; exit 0; }
+
+command -v jq >/dev/null 2>&1 || quiet
 
 INPUT=$(cat)
-TRANSCRIPT=$(echo "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)
-SESSION_ID="${SESSION_ID:-${AGY_SESSION_ID:-unknown}}"
+TRANSCRIPT=$(printf '%s' "$INPUT" | jq -r '.transcriptPath // empty' 2>/dev/null)
+SESSION_ID=$(printf '%s' "$INPUT" | jq -r '.conversationId // empty' 2>/dev/null)
+# Sanitised because it is interpolated into a /tmp path below (see grounding-guard).
+SESSION_ID=$(printf '%s' "$SESSION_ID" | tr -cd 'A-Za-z0-9._-')
+SESSION_ID="${SESSION_ID:-unknown}"
 
 BAND_LINES=1500
 
-if [[ -n "$TRANSCRIPT" ]] && [[ -f "$TRANSCRIPT" ]]; then
-  LINES=$(wc -l < "$TRANSCRIPT" 2>/dev/null | tr -d ' ')
-  if [[ "$LINES" =~ ^[0-9]+$ ]]; then
-    BAND=$(( LINES / BAND_LINES ))
-    if [[ "$BAND" -ge 1 ]]; then
-      MARKER="/tmp/dotai_ctxband_agy_${SESSION_ID}"
-      LAST_BAND=$(cat "$MARKER" 2>/dev/null)
-      [[ "$LAST_BAND" =~ ^[0-9]+$ ]] || LAST_BAND=0
-      if [[ "$BAND" -gt "$LAST_BAND" ]]; then
-        echo "$BAND" > "$MARKER"
-        echo "ℹ️  [advisory] Session transcript is large (~${LINES} lines)." >&2
-        echo "    Long sessions re-send their whole context every turn (~96% of token cost)." >&2
-        echo "    Run /handoff to save a resume file, then start a fresh session from the handoff." >&2
-      fi
-    fi
-  fi
-fi
+[[ -z "$TRANSCRIPT" || ! -f "$TRANSCRIPT" ]] && quiet
 
-exit 0
+LINES=$(wc -l < "$TRANSCRIPT" 2>/dev/null | tr -d ' ')
+[[ "$LINES" =~ ^[0-9]+$ ]] || quiet
+
+BAND=$(( LINES / BAND_LINES ))
+[[ "$BAND" -ge 1 ]] || quiet
+
+# One nudge per band crossing — PreInvocation fires on every model call, so
+# without this the advice would repeat on every single turn.
+MARKER="/tmp/dotai_ctxband_agy_${SESSION_ID}"
+LAST_BAND=$(cat "$MARKER" 2>/dev/null)
+[[ "$LAST_BAND" =~ ^[0-9]+$ ]] || LAST_BAND=0
+[[ "$BAND" -gt "$LAST_BAND" ]] || quiet
+echo "$BAND" > "$MARKER"
+
+jq -cn --arg m "ℹ️ [advisory] Session transcript is large (~${LINES} lines). Long sessions re-send their whole context every turn (~96% of token cost). Run /handoff to save a resume file, then start a fresh session from it." \
+  '{injectSteps:[{ephemeralMessage:$m}]}'

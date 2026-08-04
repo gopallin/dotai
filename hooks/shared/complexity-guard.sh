@@ -22,9 +22,11 @@ COUNT=$(($(cat "$COUNTER_FILE") + 1))
 echo "$COUNT" > "$COUNTER_FILE"
 
 # 3. Trigger Detection
-# Matches both Claude (Grep, Read) and Gemini (grep_search, read_file) tool names
+# Matches Claude (Grep, Read, Glob) and agy (grep_search, view_file, list_dir)
+# tool names. agy's read/list tools are view_file and list_dir — read_file and
+# list_directory do not exist there, so they never matched.
 case "$TOOL_NAME" in
-    "Grep"|"grep_search"|"Read"|"read_file"|"Glob"|"glob"|"list_directory")
+    "Grep"|"grep_search"|"Read"|"read_file"|"view_file"|"view_file_outline"|"Glob"|"glob"|"list_directory"|"list_dir")
         if [ "$COUNT" -ge "$THRESHOLD" ]; then
             echo -e "\033[1;33m[dotai ADVISORY]\033[0m Continuous manual exploration detected (Step $COUNT)." >&2
             echo -e "To maintain clean context, consider delegating to \033[1;36mcodebase_investigator\033[0m or a Task Agent." >&2

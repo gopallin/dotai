@@ -35,9 +35,14 @@ for cli in claude codex agy; do
   HOME="$TEST_HOME" bash "$ROOT/scripts/$cli/install.sh" >/dev/null
 done
 
+# agy has no "commands" customization type — dotai's slash commands ship there as
+# skills, so its skills root legitimately holds more entries than the other CLIs.
+AGY_COMMANDS=(precommit plan next-ticket handoff prompt)
+
 assert_skills_root() {
-  local label=$1 root=$2
-  for s in "${SKILLS[@]}"; do
+  local label=$1 root=$2; shift 2
+  local expected=("$@")
+  for s in "${expected[@]}"; do
     [ -f "$root/$s/SKILL.md" ] || {
       echo "❌ $label: missing $root/$s/SKILL.md" >&2
       exit 1
@@ -50,8 +55,8 @@ assert_skills_root() {
 
   local count
   count=$(find "$root" -mindepth 2 -maxdepth 2 -name SKILL.md | wc -l | tr -d ' ')
-  [ "$count" = "${#SKILLS[@]}" ] || {
-    echo "❌ $label: expected ${#SKILLS[@]} skills in $root, found $count" >&2
+  [ "$count" = "${#expected[@]}" ] || {
+    echo "❌ $label: expected ${#expected[@]} skills in $root, found $count" >&2
     exit 1
   }
 
@@ -64,13 +69,26 @@ assert_skills_root() {
   }
 }
 
-assert_skills_root claude "$TEST_HOME/.claude/skills"
-assert_skills_root codex  "$TEST_HOME/.codex/skills"
+assert_skills_root claude "$TEST_HOME/.claude/skills" "${SKILLS[@]}"
+assert_skills_root codex  "$TEST_HOME/.codex/skills"  "${SKILLS[@]}"
 # agy's global customization root is ~/.gemini/config/, not ~/.gemini/.
-assert_skills_root agy    "$TEST_HOME/.gemini/config/skills"
+assert_skills_root agy    "$TEST_HOME/.gemini/config/skills" "${SKILLS[@]}" "${AGY_COMMANDS[@]}"
 
-[ ! -e "$TEST_HOME/.gemini/skills" ] || {
-  echo "❌ agy: legacy $TEST_HOME/.gemini/skills still present" >&2
+for legacy in "$TEST_HOME/.gemini/skills" "$TEST_HOME/.gemini/commands"; do
+  [ ! -e "$legacy" ] || {
+    echo "❌ agy: legacy $legacy still present (agy never reads it)" >&2
+    exit 1
+  }
+done
+
+# The commands-as-skills need a name in frontmatter; precommit.md only carries a
+# description, so the installer must inject one or agy will not register it.
+grep -Fqx 'name: precommit' "$TEST_HOME/.gemini/config/skills/precommit/SKILL.md" || {
+  echo "❌ agy: precommit SKILL.md is missing the injected 'name: precommit'" >&2
+  exit 1
+}
+[ -x "$TEST_HOME/.gemini/config/skills/precommit/precommit.sh" ] || {
+  echo "❌ agy: precommit.sh helper not installed beside its skill" >&2
   exit 1
 }
 

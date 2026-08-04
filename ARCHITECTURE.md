@@ -189,22 +189,27 @@ Triggered **before** any tool (Bash, Read, API) executes.
 #### Token-Efficiency Hooks: Cross-CLI Portability
 
 The two token-efficiency hooks port unevenly because the deciding factor is each
-CLI's pre-tool event coverage, not its data format (all three pass the same stdin
-JSON: `session_id`, `transcript_path`, `tool_name`, `tool_input`).
+CLI's pre-tool event coverage. Note the data formats are **not** uniform: Claude
+Code and Codex pass `session_id` / `transcript_path` / `tool_name` / `tool_input`
+and treat `exit 2` as a block, while agy passes camelCase `conversationId` /
+`transcriptPath` / `toolCall.name` / `toolCall.args` and reads a JSON decision from
+stdout, ignoring the exit code (see CLAUDE.md §agy Hook Contract).
 
 | Hook | Claude Code | Codex CLI | Antigravity CLI (agy) |
 |---|---|---|---|
-| `context-budget-guard` (advisory) | PreToolUse (broad) | PreToolUse（目前安裝於 `Bash`）¹ | AfterAgent (`*`) |
-| `read-dedup-guard` (blocks reads) | PreToolUse/`Read` ✅ | **內建讀檔工具 coverage 未驗證**² | BeforeTool/`read_file` ⚠️ experimental³ |
+| `context-budget-guard` (advisory) | PreToolUse (broad) | PreToolUse（目前安裝於 `Bash`）¹ | PreInvocation → `injectSteps` ✅ |
+| `read-dedup-guard` (blocks reads) | PreToolUse/`Read` ✅ | **內建讀檔工具 coverage 未驗證**² | PreToolUse/`view_file` ✅³ |
 
 1. Codex `PreToolUse` 可攔 Bash、`apply_patch`、MCP 與其他 local function tools；
    本專案的 context-budget guard 目前只註冊於 `Bash`。
 2. Codex 是否把其內建讀檔工具交給 hook，必須在目標版本實測；未確認前不安裝
    read-dedup guard，也不宣稱它不可能實作。
-3. agy `BeforeTool` can deny (exit 2 / `decision:"deny"`) and matches tool
-   names by regex, but it is **unverified** that it fires for the built-in
-   `read_file` tool — confirm empirically before relying on the block. The agy
-   port also tracks already-read paths in a per-session marker file instead of
+3. agy `PreToolUse` **fires** for `view_file` — confirmed by live probe. The deny
+   path uses `{"decision":"deny","reason":"…"}` per agy's documented contract but
+   has not been exercised end-to-end yet (see CLAUDE.md §agy Hook Contract → Still
+   unverified). (The earlier `BeforeTool`/`read_file` note was wrong on both
+   names: neither exists.) The agy
+   port tracks already-read paths in a per-conversation marker file instead of
    parsing the transcript, whose format agy documents as unstable.
 
 ---
