@@ -90,6 +90,24 @@ done
 echo "✅ /precommit script  → $CODEX_DIR/prompts/precommit.sh"
 echo "✅ /prompt template   → $CODEX_DIR/prompts/prompt-template.sh"
 
+# ── 3b. Skills (Codex discovers ~/.codex/skills/<name>/SKILL.md) ──────────────
+
+# Codex keeps its own skills under skills/.system/ and reads user skills from the
+# same root, so dotai skills install alongside without touching .system.
+CODEX_SKILLS="$CODEX_DIR/skills"
+mkdir -p "$CODEX_SKILLS"
+if [ -d "$DOTAI_DIR/skills" ]; then
+  rm -f "$CODEX_SKILLS"/*.md
+  for skill_dir in "$DOTAI_DIR/skills"/*/; do
+    [ -f "$skill_dir/SKILL.md" ] || continue
+    name=$(basename "$skill_dir")
+    rm -rf "$CODEX_SKILLS/$name"
+    mkdir -p "$CODEX_SKILLS/$name"
+    cp -R "$skill_dir." "$CODEX_SKILLS/$name/"
+    echo "✅ /$name skill → $CODEX_SKILLS/$name/SKILL.md"
+  done
+fi
+
 # ── 4. Install hook scripts ───────────────────────────────────────────────────
 
 mkdir -p "$CODEX_DIR/hooks/shared"
@@ -222,6 +240,7 @@ echo "  /next-ticket     pick up the next unblocked ticket (one context-sized sl
 echo "  /handoff         save a compact resume file before starting fresh (local-only, never committed)"
 echo "  /precommit       run lint + build + test"
 echo "  /prompt          turn a rough idea into a structured, AI-ready task prompt"
+echo "  skills/          ship · ground · git-push · preflight · parallel-design-agents"
 echo "  statusline       model · context · token usage · rate limits · git branch"
 echo "  stop-guard       auto-blocks stopping if verifications incomplete"
 echo "  branch-guard     prevents accidental pushes to master/main"

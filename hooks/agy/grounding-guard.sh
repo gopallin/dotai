@@ -1,82 +1,77 @@
 #!/usr/bin/env bash
 #
-# grounding-guard.sh (agy CLI adapter — BLOCKING)
-# Front-of-work mirror of the Claude grounding-guard, ported to agy's tool names.
-# Fires on BeforeTool for write_file / edit_file / create_file / replace_in_file.
-# Blocks the FIRST non-doc code edit of a session until GROUNDING_STATUS=PASS
-# (or SKIP) appears in the transcript.
+# grounding-guard.sh (agy CLI adapter — PreToolUse, BLOCKING)
 #
-# Exit codes:
-#   0 — allow the edit
-#   2 — block the edit (stderr message is shown; AI must run /ground first)
+# Front-of-work mirror of stop-guard: blocks the FIRST non-doc code edit of a
+# session until GROUNDING_STATUS=PASS (or SKIP) appears in the transcript.
 #
-# Tool names sourced from agy/stop-guard.sh (verified against transcript).
-# Known limits (mirrors claude/grounding-guard.sh §Known limits):
+# agy contract (verified against agy CLI — see CLAUDE.md §agy Hook Contract):
+#   event  : PreToolUse, matcher write_to_file|replace_file_content|edit_notebook
+#            (agy has no "BeforeTool" event and no write_file/edit_file tools —
+#            the previous registration matched nothing at all)
+#   stdin  : JSON, camelCase — toolCall.name, toolCall.args, transcriptPath,
+#            conversationId, stepIdx. Note args keys are PascalCase.
+#   stdout : {"decision":"deny","reason":"..."} blocks; {"decision":"allow"} permits.
+#   exit   : NOT the contract — exit 2 fails open, so always print a decision.
+#
+# Known limits (mirror claude/grounding-guard.sh):
 #   #1 Only the FIRST non-.md edit per session is gated; later edits are trusted.
 #   #2 A fabricated GROUNDING_STATUS=PASS cannot be fully prevented.
-#   #3 Bash-level file writes (echo >, sed -i) bypass this — matcher excludes Bash.
+#   #3 Writes made through run_command (echo >, sed -i) bypass this matcher.
 
-# ── Read input ────────────────────────────────────────────────────────────────
+allow() { printf '%s' '{"decision":"allow"}'; exit 0; }
+deny()  { jq -cn --arg r "$1" '{decision:"deny",reason:$r}'; exit 0; }
+
+command -v jq >/dev/null 2>&1 || { printf '%s' '{"decision":"allow"}'; exit 0; }
 
 INPUT=$(cat)
-TRANSCRIPT=$(echo "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)
-TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)
-FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.absolute_path // .tool_input.path // .tool_input.file_path // empty' 2>/dev/null)
-SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)
-SESSION_ID="${SESSION_ID:-${AGY_SESSION_ID:-unknown}}"
+TOOL_NAME=$(printf '%s' "$INPUT" | jq -r '.toolCall.name // empty' 2>/dev/null)
+TRANSCRIPT=$(printf '%s' "$INPUT" | jq -r '.transcriptPath // empty' 2>/dev/null)
+SESSION_ID=$(printf '%s' "$INPUT" | jq -r '.conversationId // empty' 2>/dev/null)
+# Strip anything that is not [A-Za-z0-9._-]: this value comes from the hook
+# payload and is interpolated into a /tmp path below, so a `/` or `..` in it
+# would write the marker outside the intended location.
+SESSION_ID=$(printf '%s' "$SESSION_ID" | tr -cd 'A-Za-z0-9._-')
+SESSION_ID="${SESSION_ID:-unknown}"
 
-# Only act on agy's file-editing tools (mirrors stop-guard.sh tool list).
+# agy tool args use PascalCase (verified: run_command→CommandLine,
+# list_dir→DirectoryPath). The exact key for the file tools is not yet confirmed
+# (agy quota ran out mid-probe), so accept the plausible spellings. A missed key
+# only means the *.md skip below cannot fire — it never blocks a legit edit.
+FILE_PATH=$(printf '%s' "$INPUT" | jq -r '
+  .toolCall.args // {} |
+  (.AbsolutePath // .TargetFile // .TargetFilePath // .FilePath // .Path // .File // empty)
+' 2>/dev/null)
+
 case "$TOOL_NAME" in
-  write_file|edit_file|create_file|replace_in_file) ;;
-  *) exit 0 ;;
+  write_to_file|replace_file_content|edit_notebook) ;;
+  *) allow ;;
 esac
 
-# No transcript available — allow (fail open, same as claude version).
-if [[ -z "$TRANSCRIPT" ]] || [[ ! -f "$TRANSCRIPT" ]]; then
-  exit 0
-fi
+[[ -z "$TRANSCRIPT" || ! -f "$TRANSCRIPT" ]] && allow
 
 # ── Skip 1: not in a git repo ─────────────────────────────────────────────────
-if ! git rev-parse --git-dir >/dev/null 2>&1; then
-  exit 0
-fi
+git rev-parse --git-dir >/dev/null 2>&1 || allow
 
-# ── Skip 2: on master/main ────────────────────────────────────────────────────
+# ── Skip 2: on master/main (branch-guard owns that case) ─────────────────────
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
-if [[ "$CURRENT_BRANCH" == "master" || "$CURRENT_BRANCH" == "main" ]]; then
-  exit 0
-fi
+case "$CURRENT_BRANCH" in master|main) allow ;; esac
 
-# ── Skip 3: documentation edits ───────────────────────────────────────────────
+# ── Skip 3: documentation edits ──────────────────────────────────────────────
 case "$FILE_PATH" in
-  *.md|*/.claudedocs/*) exit 0 ;;
+  *.md|*/.claudedocs/*) allow ;;
 esac
 
-# ── Only gate the FIRST non-doc code edit of the session ──────────────────────
+# ── Only gate the FIRST non-doc code edit of the session ─────────────────────
 COUNTER_FILE="/tmp/dotai_grounding_agy_${SESSION_ID}"
 [[ -f "$COUNTER_FILE" ]] || echo "0" > "$COUNTER_FILE"
 COUNT=$(cat "$COUNTER_FILE" 2>/dev/null)
 [[ "$COUNT" =~ ^[0-9]+$ ]] || COUNT=0
+[[ "$COUNT" -ge 1 ]] && allow
 
-if [[ "$COUNT" -ge 1 ]]; then
-  exit 0
-fi
-
-# ── First non-doc code edit: require a grounding marker ───────────────────────
-
-if grep -q 'GROUNDING_STATUS=PASS' "$TRANSCRIPT" 2>/dev/null; then
+if grep -qE 'GROUNDING_STATUS=(PASS|SKIP)' "$TRANSCRIPT" 2>/dev/null; then
   echo "1" > "$COUNTER_FILE"
-  exit 0
+  allow
 fi
 
-if grep -q 'GROUNDING_STATUS=SKIP' "$TRANSCRIPT" 2>/dev/null; then
-  echo "1" > "$COUNTER_FILE"
-  exit 0
-fi
-
-# No marker — block and instruct.
-echo "⛔ First code edit of this session, but grounding was not done." >&2
-echo "Run /ground to verify before writing: restate the task, read 1-2 existing" >&2
-echo "reference files, verify any data/IDs, then emit GROUNDING_STATUS=PASS." >&2
-echo "For a genuinely trivial edit, emit: GROUNDING_STATUS=SKIP reason=<why>" >&2
-exit 2
+deny "First code edit of this session, but grounding was not done. Run /ground first: restate the task, read 1-2 existing reference files, verify any data/IDs, then emit GROUNDING_STATUS=PASS. For a genuinely trivial edit, emit GROUNDING_STATUS=SKIP reason=<why>."
