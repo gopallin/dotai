@@ -51,9 +51,36 @@ if [ "$CURRENT_BRANCH" = "master" ] || [ "$CURRENT_BRANCH" = "main" ]; then
         fi
     fi
 
-    # --- Bash read-only pass-through ---
-    # Whitelist of safe read-only commands.
-    SAFE_COMMANDS="^ls|^grep|^cat|^find|^git status|^git log|^git diff|^pwd|^du|^df|^stat|^file|^which|^type"
+    # --- Bash write-command block (blacklist, NOT whitelist) ---
+    #
+    # This used to be a 14-prefix read-only WHITELIST
+    # (^ls|^grep|^cat|^find|^git status|^git log|^git diff|^pwd|^du|^df|^stat|
+    #  ^file|^which|^type) and it was strictly worse than useless:
+    #
+    #   • `wc -l f | tail -40`  → blocked (`wc` simply wasn't on the list)
+    #   • `cd /x && ls -l`      → blocked (the command starts with `cd`)
+    #   • anything using head/jq/rg/sed -n/awk/sort/comm → blocked
+    #
+    # A read-only command cannot modify the repository, so every one of those
+    # rejections was capability loss for zero safety gain. What this hook actually
+    # exists to prevent is *changing* master/main, so it now enumerates the ways a
+    # shell command can write and allows everything else.
+    #
+    # Deliberately NOT blocked: package managers (`npm install`, `composer
+    # install`). They mostly touch gitignored trees, and blocking them re-creates
+    # the over-blocking this rewrite removed. Lockfile churn on master/main is
+    # caught at commit time by the git-write patterns below.
+    #
+    # KNOWN LIMIT — a blacklist is not exhaustive, and this one is not claimed to be.
+    # A write routed through an interpreter (`python -c "open('f','w')"`, a script
+    # that writes internally, an editor invocation) is NOT detected. The whitelist it
+    # replaced did not catch those either, and it additionally blocked dozens of
+    # harmless reads. What this guard actually buys is stopping the *accidental*
+    # `git commit` / `echo >` on the wrong branch; it is not a sandbox and must not
+    # be described as one.
+    WRITE_CMDS="git[[:space:]]+(commit|push|add|reset|rebase|merge|cherry-pick|revert|stash|am|apply|restore|rm|mv|clean|tag|update-ref|filter-branch)"
+    WRITE_CMDS="$WRITE_CMDS|(^|[[:space:];&|])(tee|rm|mv|truncate|dd|ln|shred)[[:space:]]"
+    WRITE_CMDS="$WRITE_CMDS|(sed|perl|ruby)[[:space:]]+[^|;]*-i|awk[[:space:]]+[^|;]*-i[[:space:]]*inplace"
     if [ -n "$EXECUTING_CMD" ]; then
         # Escape hatch: `git checkout` / `git switch` must ALWAYS be allowed on
         # master/main so the agent can leave (otherwise every bash is blocked,
@@ -68,21 +95,30 @@ if [ "$CURRENT_BRANCH" = "master" ] || [ "$CURRENT_BRANCH" = "main" ]; then
                 print t; exit } } }')
         case "$GIT_SUBCMD" in checkout|switch) exit 0 ;; esac
 
-        # Other read-only commands: allow unless they redirect stdout to a FILE
-        # (`> file` / `>> file` = a real write masquerading as a safe read).
-        # The regex matches a `>`/`>>` whose preceding char is neither a digit
-        # nor `&`, so stderr operations (`2>&1`, `2>/dev/null`, `>&2`) pass.
-        if echo "$EXECUTING_CMD" | grep -qiE "$SAFE_COMMANDS" \
-           && ! echo "$EXECUTING_CMD" | grep -qE '(^|[^0-9&])>>?($|[^&])'; then
+        # Redirection to a FILE is a write masquerading as anything else.
+        # The regex matches a `>`/`>>` whose preceding char is neither a digit nor
+        # `&`, so stderr operations (`2>&1`, `2>/dev/null`, `>&2`) still pass.
+        if echo "$EXECUTING_CMD" | grep -qE '(^|[^0-9&])>>?($|[^&])'; then
+            BLOCK_REASON="redirects output to a file"
+        elif echo "$EXECUTING_CMD" | grep -qiE "$WRITE_CMDS"; then
+            BLOCK_REASON="runs a write/history-modifying command"
+        else
+            # Not a write — allow. This is the common case now.
             exit 0
         fi
-    else
-        # Could not determine the command (no stdin payload / parse failure).
-        # Fail OPEN rather than trap the agent on master: this hook only matches
-        # the Bash tool, so the worst case is one non-git command slipping
-        # through, whereas failing closed blocks EVERY bash — including the
-        # `git checkout` needed to leave master. The commit/push protection then
-        # rests on the agent's own branch-discipline rules.
+    elif [ -z "$FILE_PATH" ]; then
+        # Neither a command NOR a file path — the payload was unparsable.
+        # Fail OPEN rather than trap the agent on master: failing closed would
+        # block EVERY tool call, including the `git checkout` needed to leave
+        # master. The commit/push protection then rests on the agent's own
+        # branch-discipline rules.
+        #
+        # This branch MUST NOT swallow the Edit/Write case. It used to be a plain
+        # `else`, and since an Edit payload carries `file_path` but no `command`,
+        # every Edit/Write/MultiEdit on master/main hit this fail-open `exit 0`
+        # and the file-path check below was unreachable. The hook's headline
+        # promise — "prevents accidental edits to master/main" — was therefore
+        # only ever true for Bash.
         echo "⚠️  branch-guard: could not parse tool input; allowing (fail-open)." >&2
         exit 0
     fi
@@ -94,24 +130,21 @@ if [ "$CURRENT_BRANCH" = "master" ] || [ "$CURRENT_BRANCH" = "main" ]; then
         case "$FILE_PATH" in
             *.md|*/.claudedocs/*) exit 0 ;;
         esac
+        BLOCK_REASON="edits a non-documentation file ($FILE_PATH)"
     fi
     # --------------------------------------
 
-    cat >&2 << 'EOF'
+    cat >&2 << EOF
 ❌ dotai Branch Protection
 ━━━━━━━━━━━━━━━━━━━━━━━━━
-You are currently on 'master' or 'main' branch.
-Cannot edit, commit, or push from protected branches.
+Current branch is '$CURRENT_BRANCH', and this command ${BLOCK_REASON:-modifies the repository}.
 
-To proceed:
-1. Create a feature branch: git checkout -b feature/your-feature
+Read-only commands are allowed here — only writes are blocked. To proceed:
+1. git checkout -b feature/your-feature   (always permitted, even on master/main)
 2. Make changes there
-3. Push and create a PR
+3. Push and open a PR
 
-If you intentionally need to edit main:
-- Use git checkout to switch to main manually
-- Make changes
-- Use: git push --force-with-lease origin main (NOT RECOMMENDED)
+If you genuinely must change master/main, switch to it yourself outside the agent.
 EOF
     exit 2
 fi

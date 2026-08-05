@@ -22,24 +22,20 @@
       }
     ]
   },
-  "dotai-read-dedup-guard": {
-    "PreToolUse": [
-      {
-        "matcher": "view_file",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.gemini/hooks/read-dedup-guard.sh",
-            "timeout": 30
-          }
-        ]
-      }
-    ]
-  },
   "dotai-branch-guard": {
     "PreToolUse": [
       {
         "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.gemini/hooks/shared-guard-adapter.sh ~/.gemini/hooks/shared/branch-guard.sh",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "write_to_file|replace_file_content|edit_notebook",
         "hooks": [
           {
             "type": "command",
@@ -58,20 +54,6 @@
           {
             "type": "command",
             "command": "bash ~/.gemini/hooks/shared-guard-adapter.sh ~/.gemini/hooks/shared/glab-guard.sh",
-            "timeout": 30
-          }
-        ]
-      }
-    ]
-  },
-  "dotai-complexity-guard": {
-    "PreToolUse": [
-      {
-        "matcher": "grep_search|view_file|view_file_outline|list_dir",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.gemini/hooks/shared-guard-adapter.sh ~/.gemini/hooks/shared/complexity-guard.sh",
             "timeout": 30
           }
         ]

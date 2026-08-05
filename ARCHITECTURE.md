@@ -17,18 +17,28 @@
 
 **Location:** `~/dotai/GLOBAL_RULES.md`
 
-**Purpose:** Single authoritative source for all AI CLI behavior rules.
+**Purpose:** The standing instructions that cannot be derived — this machine's
+environment and the owner's non-obvious policies. Nothing else.
+
+⚠️ **This file is deliberately small (~3.4KB, down from 11.9KB).** It loads in every
+session of every project, so it is the most expensive and least enforceable channel
+available. Before adding anything here, read
+[CLAUDE.md §Prompt Minimalism](CLAUDE.md#prompt-minimalism--read-this-before-adding-any-rule)
+and [docs/ABLATION.md](docs/ABLATION.md).
 
 **Sections:**
 - **Response Style & Language** — Match user's language (優先使用繁體中文)
-- **Requirement Clarification** — SOLID workflow before development
-- **Coding Standards** — SOLID principles enforcement
-- **Shell Environment** — zsh best practices, ~ expansion, stderr handling
-- **ClickUp API Rules** — API-maintained vs. UI-maintained card formatting
-- **Scope Discipline** — No unnecessary features or abstractions
-- **Branch Discipline** — Branch confirmation, protected branch workflow
-- **Pre-Optimization Semantic Check** — Verify context before refactoring
-- **Investigation & Agent Strategy** — Codebase exploration patterns
+- **Branch & Git Discipline** — Protected branches, commit authorization, message format
+- **Shell Environment & Credentials** — zsh, Keychain tokens, no `glab`, secret rotation
+- **Verifying Against Screenshots** — Vision Echo, never assume IDs, DB beats screenshot
+- **Two Failure Modes Worth Naming** — don't average conflicting patterns; skipped ≠ passed
+- **Tests Encode Why, Not What** — assert the business rule, not the return type
+
+Removed in the 2026-08 ablation because a current model already does them: SOLID,
+scope discipline, convention matching, profile-before-optimizing,
+document-why-not-what, pre-optimization semantic check. Removed because they
+actively cost capability: per-task token budgets, mandatory clarify-and-confirm
+round trips, the numeric sub-agent threshold. See `docs/ABLATION.md`.
 
 **Distribution:**
 - Copied to `~/.claude/CLAUDE.md` (Claude Code)
@@ -157,10 +167,9 @@ dotai/ (source)
 Triggered **before** any tool (Bash, Read, API) executes.
 
 **Examples:**
-- `branch-guard.sh` — Blocks bash on master/main
+- `branch-guard.sh` — Blocks **write** commands and non-doc file edits on master/main; read-only commands pass through
 - `grounding-guard.sh` — Blocks the first un-grounded code edit until `/ground` passes
-- `complexity-guard.sh` — Alerts on manual exploration loops
-- `read-dedup-guard.sh` — **Blocks** a full re-read of a file already in context this session and unchanged since (escape hatch: pass `offset`/`limit`, or Edit the file first). Cuts redundant `cache_read` tokens.
+- `glab-guard.sh` — Blocks the `glab` CLI (not installed), redirects to curl + `$GITLAB_TOKEN`
 - `context-budget-guard.sh` — **Advisory** only: reminds you to `/clear` or split the task once the session transcript grows past size bands (long sessions re-send their whole context every turn).
 
 **Registration:** `~/.claude/settings.json`
@@ -169,16 +178,24 @@ Triggered **before** any tool (Bash, Read, API) executes.
   "hooks": {
     "PreToolUse": [
       "~/.claude/hooks/shared/branch-guard.sh",
-      "~/.claude/hooks/shared/complexity-guard.sh",
+      "~/.claude/hooks/shared/glab-guard.sh",
       "~/.claude/hooks/claude/grounding-guard.sh",
-      "~/.claude/hooks/claude/read-dedup-guard.sh",
       "~/.claude/hooks/claude/context-budget-guard.sh"
     ]
   }
 }
 ```
 
-**Token-efficiency hooks (`read-dedup-guard`, `context-budget-guard`):** added to attack the dominant token cost surfaced by usage analysis — ~96% of tokens are `cache_read` (context re-sent every turn), driven by monster sessions and redundant full-file reads (1,236 across 40% of sessions). They are the runtime enforcement counterpart to trimming `GLOBAL_RULES.md`.
+**Retired (2026-08 ablation, see `docs/ABLATION.md`):** `complexity-guard.sh` was
+provably inert under Claude Code — it read the `CLAUDE_TOOL_NAME` env var, which
+Claude Code does not set, so its `case` never matched. `read-dedup-guard.sh`
+duplicated file-state tracking the harness now performs natively, and its only
+escape hatch ("Edit the file first") was wrong precisely when a file changed on
+disk externally — the case that legitimately needs a re-read.
+
+**Remaining token-efficiency work** rests on `context-budget-guard` plus
+`/handoff`: ~96% of tokens are `cache_read` (context re-sent every turn), dominated
+by long sessions rather than by redundant reads.
 
 #### CLI-Specific Hooks
 
@@ -188,7 +205,11 @@ Triggered **before** any tool (Bash, Read, API) executes.
 
 #### Token-Efficiency Hooks: Cross-CLI Portability
 
-The two token-efficiency hooks port unevenly because the deciding factor is each
+> `read-dedup-guard` was retired in the 2026-08 ablation; the row below is kept
+> because the **portability analysis** still applies to any future read-gating
+> hook, not because the hook exists. See `docs/ABLATION.md`.
+
+The token-efficiency hooks port unevenly because the deciding factor is each
 CLI's pre-tool event coverage. Note the data formats are **not** uniform: Claude
 Code and Codex pass `session_id` / `transcript_path` / `tool_name` / `tool_input`
 and treat `exit 2` as a block, while agy passes camelCase `conversationId` /
@@ -198,7 +219,7 @@ stdout, ignoring the exit code (see CLAUDE.md §agy Hook Contract).
 | Hook | Claude Code | Codex CLI | Antigravity CLI (agy) |
 |---|---|---|---|
 | `context-budget-guard` (advisory) | PreToolUse (broad) | PreToolUse（目前安裝於 `Bash`）¹ | PreInvocation → `injectSteps` ✅ |
-| `read-dedup-guard` (blocks reads) | PreToolUse/`Read` ✅ | **內建讀檔工具 coverage 未驗證**² | PreToolUse/`view_file` ✅³ |
+| ~~`read-dedup-guard`~~ (retired) | PreToolUse/`Read` ✅ | **內建讀檔工具 coverage 未驗證**² | PreToolUse/`view_file` ✅³ |
 
 1. Codex `PreToolUse` 可攔 Bash、`apply_patch`、MCP 與其他 local function tools；
    本專案的 context-budget guard 目前只註冊於 `Bash`。
@@ -395,8 +416,13 @@ bash -c "echo 'This should work'"  # ✅ Allowed
 
 ```bash
 git checkout main
-bash -c "echo 'This should fail'"  # ❌ Blocked with exit code 2
+bash -c "echo 'x' > file.txt"   # ❌ Blocked (exit 2) — writes to a file
+git commit -m wip               # ❌ Blocked (exit 2) — write command
+wc -l CLAUDE.md | tail -5       # ✅ Allowed — read-only
+git checkout -b feature/x       # ✅ Always allowed (the escape hatch)
 ```
+
+Or run the suite: `bash tests/branch-guard.test.sh`
 
 ---
 
@@ -406,9 +432,10 @@ bash -c "echo 'This should fail'"  # ❌ Blocked with exit code 2
 
 When Claude Code restarts, it reads `~/.claude/settings.json` and activates hooks:
 
-1. **PreToolUse hooks** execute before Bash/Read/API tools
-2. **branch-guard.sh** blocks operations on protected branches
-3. **complexity-guard.sh** alerts on deep exploration patterns
+1. **PreToolUse hooks** execute before Bash/Edit/Write/Read tools
+2. **branch-guard.sh** blocks write operations on protected branches
+3. **grounding-guard.sh** blocks the first code edit until `/ground` passes
+4. **SessionStart hooks** run `stack-rules.sh` (loads the detected stack's rules) and, after `/clear`, `handoff-reminder.sh`
 
 ### Available Commands
 

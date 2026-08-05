@@ -82,8 +82,16 @@ ok   # reaching here means the sweep found nothing
 [ -f "$EXAMPLE" ] && ok || bad "docs/reviewer-rules.example.md missing — project rules were dropped, not relocated"
 grep -qE "$PROJECT_SPECIFIC" "$EXAMPLE" 2>/dev/null && ok \
   || bad "example template does not actually contain the preserved project rules"
-if grep -rn 'docs/' "$ROOT/scripts"/*/install.sh 2>/dev/null | grep -qv '^\s*#'; then
-  bad "an installer copies docs/ — the example template would become global again"
+# The comment filter here was inert: `grep -rn` prefixes each line with
+# `path:lineno:`, so `^\s*#` never matched and ANY mention of docs/ in an installer
+# failed the test — including a `# see docs/ABLATION.md` cross-reference. Strip the
+# prefix first, then look only for lines that actually COPY, which is the real risk.
+DOCS_COPIED=$(grep -rn 'docs/' "$ROOT/scripts"/*/install.sh 2>/dev/null \
+  | sed 's/^[^:]*:[0-9]*://' \
+  | grep -vE '^[[:space:]]*#' \
+  | grep -E '(^|[[:space:];&|])(cp|rsync|install|ln|mv)([[:space:]]|$)' || true)
+if [ -n "$DOCS_COPIED" ]; then
+  bad "an installer copies docs/ — the example template would become global again: $DOCS_COPIED"
 else
   ok
 fi

@@ -48,10 +48,17 @@ fail() { echo "❌ $1" >&2; exit 1; }
 [ -f "$HJ" ] || fail "hooks.json was not written to the global customization root"
 
 # Every dotai guard is registered, under an event agy actually supports.
-for name in dotai-stop-guard dotai-grounding-guard dotai-read-dedup-guard \
-            dotai-branch-guard dotai-glab-guard dotai-complexity-guard \
+for name in dotai-stop-guard dotai-grounding-guard \
+            dotai-branch-guard dotai-glab-guard \
             dotai-context-budget-guard; do
   jq -e --arg n "$name" 'has($n)' "$HJ" >/dev/null || fail "hooks.json missing $name"
+done
+
+# Retired by the prompt-layer ablation (docs/ABLATION.md): complexity-guard was
+# provably inert, read-dedup-guard duplicated harness-native behaviour. Pinned as
+# ABSENT so a stale copy cannot quietly return.
+for gone in dotai-read-dedup-guard dotai-complexity-guard; do
+  jq -e --arg n "$gone" 'has($n) | not' "$HJ" >/dev/null || fail "hooks.json still registers retired $gone"
 done
 
 BADEVENTS=$(jq -r '[.[] | keys[] | select(. != "enabled")]
