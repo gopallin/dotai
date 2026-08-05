@@ -127,6 +127,8 @@ Ran but FAIL? Still cannot stop.
 ```
 ~/dotai/                        ← git repo (GitHub: gopallin/dotai)
 ├── CLAUDE.md                   ← this file
+├── .claude/
+│   └── reviewer-rules.md       ← dotai's OWN L1/L2/L3 rules (discovery slot 1; not installed)
 ├── install.sh                  ← unified installer entry point
 ├── scripts/
 │   ├── claude/

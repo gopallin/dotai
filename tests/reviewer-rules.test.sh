@@ -120,5 +120,38 @@ for cli in claude codex agy; do
   fi
 done
 
+# ── dotai's own project rules ────────────────────────────────────────────────
+# Until these existed, running /ship here hit discovery slot 3 ("nothing found"),
+# so the discovery path the protocol documents was never actually exercised in the
+# repo that ships it.
+
+OWN="$ROOT/.claude/reviewer-rules.md"
+[ -f "$OWN" ] && ok || bad ".claude/reviewer-rules.md missing — dotai has no rules of its own"
+
+for level in 'L1' 'L2' 'L3'; do
+  grep -q "$level" "$OWN" 2>/dev/null && ok || bad "dotai rules do not cover $level"
+done
+
+# Slot 1 must win over slot 2, so a stray CLAUDE.md section cannot shadow the file.
+if grep -q '^## Reviewer Rules' "$ROOT/CLAUDE.md" 2>/dev/null; then
+  bad "CLAUDE.md also defines '## Reviewer Rules' — two sources again; keep only .claude/reviewer-rules.md"
+else
+  ok
+fi
+
+# These rules must be about THIS repo, not carried over from the Laravel template.
+if grep -qE "$PROJECT_SPECIFIC" "$OWN"; then
+  bad ".claude/reviewer-rules.md contains another project's assets"
+else
+  ok
+fi
+
+# It is a project file, not something installed onto other machines.
+if grep -rn '\.claude/reviewer-rules' "$ROOT/scripts"/*/install.sh 2>/dev/null | grep -qv '^\s*#'; then
+  bad "an installer ships .claude/reviewer-rules.md — it is dotai's own, not global"
+else
+  ok
+fi
+
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

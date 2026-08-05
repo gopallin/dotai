@@ -153,25 +153,77 @@ Hostname is a heuristic: a self-hosted GitHub Enterprise or GitLab often sits on
 neutral domain like `git.acme.com` and lands in `unknown`. That is deliberate — go
 to 5c and **ask** rather than firing a POST at the wrong API with a real token.
 
-#### 5a. `route=github` → `gh`
+#### 5a. `route=github` → `gh`, else REST API
+
+Try in this order. **Never fall back to the GitLab API** — that would send
+`$GITLAB_TOKEN` to GitHub.
+
+**5a-i — `gh` if available** (preferred: it manages its own auth and handles
+GitHub Enterprise hosts without extra config):
 
 ```bash
-command -v gh >/dev/null 2>&1 || { echo "gh not installed"; }
-gh auth status >/dev/null 2>&1 || { echo "gh not authenticated"; }
-
-TITLE=$(git log -1 --format=%s)
-gh pr create --base "$TARGET_BRANCH" --head "$BRANCH" \
-  --title "$TITLE" --body "$(printf '## Summary\n\n%s\n\n---\n*Shipped via /ship with L1/L2/L3 verification*' "$(git log -1 --format=%b)")"
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  gh pr create --base "$TARGET_BRANCH" --head "$BRANCH" \
+    --title "$(git log -1 --format=%s)" \
+    --body "$(printf '## Summary\n\n%s\n\n---\n*Shipped via /ship with L1/L2/L3 verification*' "$(git log -1 --format=%b)")"
+fi
 ```
 
-**If `gh` is missing or unauthenticated, do NOT fail silently and do NOT fall back
-to the GitLab API.** Report the blocker, print the ready-to-click compare URL, and
-give the user the PR body so nothing is lost:
+**5a-ii — REST API + a fine-grained PAT** when `gh` is absent:
+
+```bash
+# Prefer the exported var, but read Keychain directly as a fallback: a shell
+# started before the token was added to ~/.zshrc has no $GITHUB_TOKEN, and that
+# should not block shipping. Never echo this value.
+GH_TOKEN_VAL="${GITHUB_TOKEN:-$(security find-generic-password -a "github" -s "ai-agent-github-token" -w 2>/dev/null)}"
+
+# github.com uses api.github.com; GitHub Enterprise uses https://<host>/api/v3.
+case "$FORGE_HOST" in
+  github.com) API_BASE="https://api.github.com" ;;
+  *)          API_BASE="https://$FORGE_HOST/api/v3" ;;
+esac
+
+BODY=$(printf '## Summary\n\n%s\n\n---\n*Shipped via /ship with L1/L2/L3 verification*' "$(git log -1 --format=%b)")
+
+RESP=$(curl -s -w '\n%{http_code}' -X POST \
+  -H "Authorization: Bearer $GH_TOKEN_VAL" \
+  -H "Accept: application/vnd.github+json" \
+  -H "X-GitHub-Api-Version: 2022-11-28" \
+  -d "$(jq -n --arg t "$(git log -1 --format=%s)" --arg h "$BRANCH" \
+            --arg b "$TARGET_BRANCH" --arg body "$BODY" \
+        '{title:$t, head:$h, base:$b, body:$body}')" \
+  "$API_BASE/repos/$PROJECT_PATH/pulls")
+
+CODE=$(printf '%s' "$RESP" | tail -1)
+printf '%s' "$RESP" | sed '$d' | jq '{number, html_url, state}' 2>/dev/null
+echo "HTTP $CODE"
+```
+
+Build the payload with `jq -n`, never string interpolation — a commit body
+containing a quote, backslash, or newline otherwise yields invalid JSON.
+
+**Interpret the status code before reporting.** A bare HTTP number is misleading
+here; fine-grained tokens fail in ways that read like the repo is missing:
+
+| Code | Meaning | Fix |
+|---|---|---|
+| `201` | PR created | use `html_url` |
+| `401` | token invalid or **expired** (fine-grained PATs always expire) | regenerate, then `security add-generic-password -a github -s ai-agent-github-token -w` |
+| `403` | authenticated but lacks **Pull requests: write** | edit the token's permissions |
+| `404` | repo not in the token's **Repository access** list (not "missing repo") | add the repo to the token |
+| `422` | PR already exists for this branch, or no commits between branches | check for an open PR first |
+
+**5a-iii — neither available:** report the blocker, do not fail silently. Print the
+click-through URL and the PR body so no work is lost:
 
 ```bash
 echo "https://$FORGE_HOST/$PROJECT_PATH/pull/new/$BRANCH"
-echo "Fix with: brew install gh && gh auth login"
+echo "Fix with EITHER: brew install gh && gh auth login"
+echo "            OR: create a fine-grained PAT (Pull requests: write) and store it:"
+echo "                security add-generic-password -a github -s ai-agent-github-token -w"
 ```
+
+Never print the token, and never include it in an error message.
 
 #### 5b. `route=gitlab` → REST API + `$GITLAB_TOKEN`
 
