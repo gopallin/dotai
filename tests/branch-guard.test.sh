@@ -107,6 +107,24 @@ check_edit allow '/repo/README.md'
 check_edit allow '/repo/.claudedocs/note.txt'
 check_edit block '/repo/app/Services/Foo.php'
 
+# git internals: git cannot track anything inside .git, so a write there can never
+# dirty the branch or enter history. Blocking it only broke /handoff, which writes
+# its ignore patterns to .git/info/exclude.
+check_edit allow '/repo/.git/info/exclude'
+check_edit allow '/repo/.git/config'
+check_edit allow '/repo/vendor/pkg/.git/info/exclude'
+# Relative path: Claude Code sends absolute, but the contract does not promise it
+# for every CLI, and a `*/.git/*`-only pattern would block this.
+check_edit allow '.git/info/exclude'
+# Submodules and worktrees make `.git` a FILE holding a `gitdir:` pointer.
+check_edit allow '/repo/sub/.git'
+
+# ...but `.github/` is NOT `.git/` — workflow files are tracked repo content and
+# must stay blocked. A sloppy glob would let these through.
+check_edit block '/repo/.github/workflows/ci.yml'
+check_edit block '/repo/.gitignore'
+check_edit block '/repo/src/.gitkeep'
+
 # ── Off master, the guard is inert ───────────────────────────────────────────
 check allow 'git commit -m "wip"' feature
 check allow 'rm -rf build/' feature

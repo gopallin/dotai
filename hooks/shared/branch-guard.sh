@@ -123,12 +123,25 @@ if [ "$CURRENT_BRANCH" = "master" ] || [ "$CURRENT_BRANCH" = "main" ]; then
         exit 0
     fi
 
-    # --- Edit/Write/MultiEdit doc pass-through ---
+    # --- Edit/Write/MultiEdit pass-through ---
     # Documentation edits (*.md, anything under .claudedocs/) are allowed on
     # master/main — mirrors stop-guard, which treats docs as non-code changes.
+    #
+    # `.git/` internals are allowed for a different reason: git refuses to track
+    # anything inside a `.git` directory, so writing there cannot dirty the branch,
+    # cannot be committed, and cannot enter history — the three things this guard
+    # exists to prevent. Blocking it only breaks local-state workflows: /handoff
+    # writes its ignore patterns to `.git/info/exclude`, and on main that write was
+    # rejected with "edits a non-documentation file", which is both true and useless.
+    # The `.git/*` and `.git` arms (no leading `*/`) are not redundant: Claude Code
+    # sends an absolute file_path, but nothing in the contract guarantees that for
+    # every CLI, and a relative `.git/info/exclude` would miss a `*/.git/*`-only
+    # pattern and be blocked. `*/.git` (and `.git`) covers the submodule/worktree
+    # case where `.git` is a FILE containing a `gitdir:` pointer, not a directory.
     if [ -n "$FILE_PATH" ]; then
         case "$FILE_PATH" in
             *.md|*/.claudedocs/*) exit 0 ;;
+            */.git/*|*/.git|.git/*|.git) exit 0 ;;
         esac
         BLOCK_REASON="edits a non-documentation file ($FILE_PATH)"
     fi
