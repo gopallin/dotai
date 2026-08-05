@@ -256,7 +256,13 @@ CLI — see `tests/skills-install.test.sh`.
 
 **Location:** `~/dotai/rules/`
 
-**Purpose:** Language/framework-specific coding standards (path-filtered).
+**Purpose:** Language/framework-specific coding standards.
+
+> ⚠️ These are **not** path-filtered, despite what earlier docs claimed. Nothing
+> filters them: every file copied to `~/.claude/rules/` loads in every project,
+> Laravel rules included. So a rule naming one project's tables would apply
+> everywhere — which is why project-specific reviewer rules live in the project
+> repo instead (see the `reviewer-rules` skill).
 
 **Examples:**
 - **vue.md** — Vue 3 Composition API, TypeScript, Pinia rules

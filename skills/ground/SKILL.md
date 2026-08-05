@@ -31,6 +31,29 @@ skill emits `GROUNDING_STATUS=PASS` (or an explicit `SKIP`).
 Work through every step. Do **not** skip a step because the task "looks simple" —
 the skip path is the explicit `SKIP` marker below, not silence.
 
+### Step 0 — Verify git readiness
+
+Cheapest check first: it costs one command and prevents work that has to be
+redone or unpicked.
+
+```bash
+git rev-parse --abbrev-ref HEAD   # must NOT be main/master
+git status --short                # working tree should be clean
+```
+
+- **On `main`/`master`** → stop and create a feature branch first. (`branch-guard`
+  will block the edit anyway, but finding out here is cheaper than after the
+  grounding work.)
+- **Dirty working tree** → surface it. Unrelated uncommitted changes get swept
+  into the next commit and make the diff unreviewable. Ask before continuing.
+- **Reviewing or continuing someone's branch** → `git fetch origin` and check out
+  the latest first, so you ground against the real current state instead of a
+  stale local copy.
+
+This mirrors the global Pre-Implementation Grounding Protocol step 3. It was
+enforced only inside `grounding-guard.sh` (which silently skips on main), so the
+check existed in the hook but was never a step the agent actually performed.
+
 ### Step 1 — Restate the task (guards `misunderstood_request`)
 
 In one or two sentences, restate what you are about to build **in your own words**,
@@ -62,18 +85,17 @@ If the change touches **no** data, state "No data dependency" and move on.
 
 ### Step 4.5 — Reviewer Rules Alignment Check (L1 / L2 / L3)
 
-Before emitting PASS, verify that your planned implementation complies with the Reviewer Rules:
+Invoke the **`reviewer-rules`** skill and run its protocol against the change you
+are *about to make*, confirming the plan complies before emitting PASS.
 
-1. **L1 (Architecture & Parity):**
-   - Use single public method `exec()`, constructor injection, state transitions via `transitionTo()`. No business logic in controllers.
-   - **Migration Parity:** If adding/dropping columns on `shipments`, `shipment_items`, `batches`, `batch_items`, `b2b_batches`, or `b2b_batch_items`, ensure matching changes to `backup_*` mirror tables!
-2. **L2 (Stack Best Practices):**
-   - Laravel: Avoid N+1 queries, keep Eloquent efficient.
-   - NestJS / Vue 3: Standard DI and Composition API conventions.
-   - Security: Parameterized queries, input sanitization, protect PII.
-3. **L3 (Production Readiness & Concurrency):**
-   - Concurrency: Protect read-modify-write operations on shared state (`stock.usage`, counters, `picking_priority`) using Redis mutex locks (`getRedisLock`/`releaseRedisLock`, key `check_capacity`).
-   - Idempotency & Observability: Ensure jobs/listeners are idempotent and log key operations.
+That skill is the single source of truth, shared with `/ship` Step 2.5. Do **not**
+inline a checklist here — this step and `/ship`'s previously carried separate copies
+and they had already drifted apart.
+
+Project-specific rules (table names, lock keys, base classes) are discovered from
+the project itself per that protocol. If none are found, say so and review against
+the generic L1/L2/L3 levels only — do not apply another project's rules from
+memory.
 
 ### Step 5 — State assumptions and confidence
 

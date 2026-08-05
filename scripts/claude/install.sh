@@ -68,6 +68,7 @@ if [ -d "$DOTAI_DIR/skills" ]; then
     rm -rf "$CLAUDE_DIR/skills/$name"
     mkdir -p "$CLAUDE_DIR/skills/$name"
     cp -R "$skill_dir." "$CLAUDE_DIR/skills/$name/"
+    INSTALLED_SKILLS="${INSTALLED_SKILLS:+$INSTALLED_SKILLS · }$name"
     echo "✅ /$name skill → $CLAUDE_DIR/skills/$name/SKILL.md"
   done
 fi
@@ -288,5 +289,7 @@ echo "  handoff-reminder after /clear: offers /resume+/handoff or transcript rec
 echo "  branch-guard     prevents accidental pushes to master/main"
 echo "  glab-guard       blocks glab CLI, directs to curl + \$GITLAB_TOKEN + jq"
 echo "  statusline       model · context-usage bar · /usage rate-limit bars"
-echo "  rules/           laravel.md · vue.md · node.md (path-filtered)"
-echo "  skills/          ship · ground · git-push · preflight · parallel-design-agents"
+echo "  rules/           laravel.md · vue.md · node.md (loaded globally, all projects)"
+# Derived from what was actually installed — a hardcoded list silently goes
+# stale the moment a skill is added (it already had, omitting reviewer-rules).
+echo "  skills/          ${INSTALLED_SKILLS:-(none)}"

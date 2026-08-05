@@ -104,6 +104,7 @@ if [ -d "$DOTAI_DIR/skills" ]; then
     rm -rf "$CODEX_SKILLS/$name"
     mkdir -p "$CODEX_SKILLS/$name"
     cp -R "$skill_dir." "$CODEX_SKILLS/$name/"
+    INSTALLED_SKILLS="${INSTALLED_SKILLS:+$INSTALLED_SKILLS · }$name"
     echo "✅ /$name skill → $CODEX_SKILLS/$name/SKILL.md"
   done
 fi
@@ -240,7 +241,9 @@ echo "  /next-ticket     pick up the next unblocked ticket (one context-sized sl
 echo "  /handoff         save a compact resume file before starting fresh (local-only, never committed)"
 echo "  /precommit       run lint + build + test"
 echo "  /prompt          turn a rough idea into a structured, AI-ready task prompt"
-echo "  skills/          ship · ground · git-push · preflight · parallel-design-agents"
+# Derived from what was actually installed — a hardcoded list silently goes
+# stale the moment a skill is added (it already had, omitting reviewer-rules).
+echo "  skills/          ${INSTALLED_SKILLS:-(none)}"
 echo "  statusline       model · context · token usage · rate limits · git branch"
 echo "  stop-guard       auto-blocks stopping if verifications incomplete"
 echo "  branch-guard     prevents accidental pushes to master/main"

@@ -57,23 +57,21 @@ npm test 2>&1
 
 ### Step 2.5: Simulated Code Review (L1 / L2 / L3 Check)
 
-Review the current `git diff` against the project's Reviewer Agent rules:
+Invoke the **`reviewer-rules`** skill and run its protocol against `git diff`.
 
-1. **L1 (Project Rules & CLAUDE.md):**
-   - Single public method `exec()`, constructor injection, state transitions via `transitionTo`.
-   - Anti-patterns: no manual status column updates, no `app()` usage, no business logic in controllers.
-   - **Data & Migrations:** If adding/dropping columns on `shipments`, `shipment_items`, `batches`, `batch_items`, `b2b_batches`, or `b2b_batch_items`, verify matching changes to `backup_*` mirror tables!
-2. **L2 (Stack Best Practices):**
-   - Laravel: No N+1 queries, Eloquent efficiency, PSR-2 styling.
-   - NestJS: Proper dependency injection and TypeScript typing safety.
-   - Vue 3: Composition API best practices, no unnecessary reactivity overhead.
-   - Security: Parameterized queries, input sanitization, PII protection.
-3. **L3 (Production & Concurrency):**
-   - Concurrency: Check for read-modify-write on shared state (`stock.usage`, counters, `picking_priority`). Ensure Redis locks (`getRedisLock`/`releaseRedisLock`, key `check_capacity`) are used.
-   - Idempotency & Observability: Ensure jobs/listeners are idempotent and important events are logged.
+That skill is the single source of truth, shared with `/ground` Step 4.5. Do **not**
+inline a checklist here — this step and `/ground`'s previously carried separate
+copies and they had already drifted apart.
+
+Project-specific rules (table names, lock keys, base classes) are discovered from
+the project itself per that protocol. If none are found, say so and review against
+the generic L1/L2/L3 levels only — do not apply another project's rules from memory.
 
 - ❌ **If violations found**: Surface the exact violation to the user and auto-fix if obvious before committing.
 - ✅ **If LGTM**: Proceed to Step 3.
+- ⚠️ **If a level could not be checked** (no project rules for the assets touched):
+  say which level and why. Reporting "L1/L2/L3 passed" when a level was never
+  actually evaluated is a false pass.
 
 ---
 

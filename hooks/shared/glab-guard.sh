@@ -29,8 +29,19 @@ if [ -z "$EXECUTING_CMD" ]; then
     exit 0
 fi
 
-# Block any command starting with `glab`
-if echo "$EXECUTING_CMD" | grep -qE '(^|;|\||\&\&|\|\|)\s*glab\b'; then
+# Strip quoted substrings before matching. The separator alternation below treats
+# any `|` as a shell pipe, so a read-only search whose PATTERN contains `\|glab`
+# (e.g. grep -rn "gitlab\.com\|glab \|PRIVATE-TOKEN") was blocked even though
+# nothing is executed — pure friction on a command that cannot invoke glab.
+#
+# Accepted trade-off: this also stops matching a glab hidden inside quotes, e.g.
+# `bash -c "glab mr list"`. That is deliberate. The failure mode this guard exists
+# to prevent is the agent typing `glab ...` directly; losing the contrived
+# quoted-invocation case is cheaper than blocking every grep for the string.
+SCRUBBED=$(printf '%s' "$EXECUTING_CMD" | sed -E "s/'[^']*'//g; s/\"[^\"]*\"//g")
+
+# Block any command whose command position is `glab`
+if echo "$SCRUBBED" | grep -qE '(^|;|\||\&\&|\|\|)\s*glab\b'; then
     cat >&2 << 'EOF'
 ❌ dotai: glab is not installed
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

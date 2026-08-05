@@ -89,6 +89,7 @@ if [ -d "$DOTAI_DIR/skills" ]; then
     rm -rf "$AGY_SKILLS/$name"
     mkdir -p "$AGY_SKILLS/$name"
     cp -R "$skill_dir." "$AGY_SKILLS/$name/"
+    INSTALLED_SKILLS="${INSTALLED_SKILLS:+$INSTALLED_SKILLS · }$name"
     echo "✅ /$name skill → $AGY_SKILLS/$name/SKILL.md"
   done
 fi
@@ -235,6 +236,8 @@ echo "  read-dedup-guard blocks full re-reads of files already in context (view_
 echo "  branch-guard     prevents edits/commands on master/main (PreToolUse)"
 echo "  glab-guard       blocks glab CLI, directs to curl + \$GITLAB_TOKEN + jq"
 echo "  statusline       model · context-usage bar · /usage rate-limit bars"
-echo "  rules/           AGENTS.md (global) and laravel.md · vue.md · node.md (path-filtered)"
-echo "  skills/          ship · ground · git-push · preflight · parallel-design-agents"
+echo "  rules/           AGENTS.md · laravel.md · vue.md · node.md (loaded globally, all projects)"
+# Derived from what was actually installed — a hardcoded list silently goes
+# stale the moment a skill is added (it already had, omitting reviewer-rules).
+echo "  skills/          ${INSTALLED_SKILLS:-(none)}"
 echo ""
