@@ -148,7 +148,8 @@ Ran but FAIL? Still cannot stop.
 │   ├── ground/SKILL.md         ← /ground pre-implementation grounding check
 │   ├── parallel-design-agents/SKILL.md ← multi-agent workflow to explore different design options
 │   ├── preflight/SKILL.md      ← environment verification checklist before starting work
-│   └── ship/SKILL.md           ← /ship test → L1/L2/L3 review → commit → push → open MR
+│   ├── reviewer-rules/SKILL.md ← single source for the L1/L2/L3 review protocol (used by /ground + /ship)
+│   └── ship/SKILL.md           ← /ship test → L1/L2/L3 review → commit → push → open MR/PR (forge-routed)
 ├── hooks/
 │   ├── hooks.json              ← hook event declarations
 │   ├── claude/
@@ -172,11 +173,27 @@ Ran but FAIL? Still cannot stop.
 │   └── shared/
 │       ├── complexity-guard.sh ← shared PreToolUse hook (all CLIs)
 │       └── branch-guard.sh     ← blocks edits/commits on master/main
-└── rules/
-    ├── laravel.md              ← Laravel-specific guidelines
-    ├── vue.md                  ← Vue.js-specific guidelines
-    └── node.md                 ← Node.js-specific guidelines
+├── rules/                      ← ⚠️ loaded GLOBALLY in every project, not path-filtered
+│   ├── laravel.md              ← Laravel-specific guidelines
+│   ├── vue.md                  ← Vue.js-specific guidelines
+│   └── node.md                 ← Node.js-specific guidelines
+└── docs/                       ← NOT installed; reference material and templates
+    └── reviewer-rules.example.md ← project-specific reviewer rules to copy into a project repo
 ```
+
+**Where reviewer rules live.** The L1/L2/L3 checklist was inlined in both
+`ground` and `ship` and had already drifted between them, while naming one
+project's tables and lock keys — which then loaded in every unrelated repo,
+because `rules/` and `skills/` are global and nothing filters them by path.
+
+Now: the stack-agnostic protocol is the `reviewer-rules` **skill** (one copy, and a
+skill rather than a `rules/*.md` file because Codex has no `rules/` mechanism, so
+any hardcoded `~/.claude/rules/...` path would be wrong there). Project-specific
+rules are discovered from the project itself — `.claude/reviewer-rules.md` or a
+`## Reviewer Rules` section in its `CLAUDE.md`. `docs/reviewer-rules.example.md`
+holds the previous Laravel/NestJS content as a template to copy into that project.
+`tests/reviewer-rules.test.sh` fails if project-specific assets reappear anywhere
+under `skills/` or `rules/`.
 
 **Installation:**
 
@@ -354,8 +371,10 @@ writes stderr and `exit 2` fails *open*.
 
 | Event | Block with | Allow with |
 |---|---|---|
-| `PreToolUse` | `{"decision":"deny","reason":"…"}` **[doc]** | `{"decision":"allow"}` **[probed]** |
+| `PreToolUse` | `{"decision":"deny","reason":"…"}` **[probed]** — blocks, and `reason` reaches the model | `{"decision":"allow"}` **[probed]** |
 | `Stop` | `{"decision":"continue","reason":"…"}` **[doc]** | any other decision **[probed]** |
+
+Only `Stop`'s `continue` remains doc-only; `PreToolUse` `deny` is confirmed.
 | `PreInvocation` | n/a — advise via `{"injectSteps":[{"ephemeralMessage":"…"}]}` **[doc]** | `{}` |
 
 stderr is never shown to the user or the model, so advisory guards must return
@@ -369,7 +388,7 @@ their text as a `reason` or an `ephemeralMessage`.
 - `Stop`: `terminationReason`, `executionNum`, `fullyIdle`, `error`
 
 **Tool names** **[probed]** (also **[binary]**: lowercased step type with the
-`CORTEX_STEP_TYPE_` prefix stripped):
+`CORTEX_STEP_TYPE_` prefix stripped). Arg keys per tool are tabulated below:
 
 | Purpose | agy tool |
 |---|---|
@@ -386,23 +405,47 @@ There is no `write_file`, `edit_file`, `create_file`, `replace_in_file`, or
 `tests/agy-hook-contract.test.sh` pins all of the above; `tests/agy-install.test.sh`
 pins where the installer writes it.
 
+### Tool arg keys — all observed from live PreToolUse payloads
+
+Args are PascalCase, and **the path key differs per tool** — this is the detail that
+silently breaks a guard, because a missed key yields an empty path and the hook
+fails open.
+
+| Tool | Arg keys |
+|---|---|
+| `view_file` | `AbsolutePath` |
+| `write_to_file` | `TargetFile`, `CodeContent`, `Overwrite`, `Description` |
+| `replace_file_content` | `TargetFile`, `StartLine`, `EndLine`, `TargetContent`, `ReplacementContent`, `Instruction`, `AllowMultiple`, `Description` |
+| `run_command` | `CommandLine`, `Cwd`, `WaitMsBeforeAsync`, `BypassSandbox` |
+| `list_dir` | `DirectoryPath` |
+| `ask_permission` | `Action`, `Reason`, `Target` |
+
+So a path is `TargetFile` for the edit tools and `AbsolutePath` for reads — the
+guards check exactly those two.
+
+**The `deny` path is confirmed to block.** With a `PreToolUse` deny registered on
+the edit tools, agy left the target file untouched and reported back verbatim:
+
+> "I attempted to use the file writing tool to create `created.txt` as requested,
+> but the tool is currently being blocked by the system
+> (**"DOTAI-PROBE-DENY: blocked on purpose"**)."
+
+That also confirms `reason` reaches the model, which is why advisory guards put
+their text there instead of stderr.
+
+**Hook ordering note.** When two named hooks match the same tool, a `deny` from one
+can short-circuit the other — a logging hook registered alongside a denying hook
+did not always run. Do not rely on two hooks both executing for one tool call.
+
 ### Still unverified
 
-**The `deny` / `continue` block path itself.** Allow-path output was exercised live;
-a real block was not. The probe that tried it matched tool name `file_change`, which
-does not exist, so it never fired — and quota ran out before a retry with
-`write_to_file`. The shapes come from agy's documented contract. Re-run the probe
-below with `"matcher":"write_to_file"` and a `deny` decision to close this.
+A **ranged** `view_file` payload. Asked for specific lines, agy reaches for
+`run_command` instead, so the range keys were never captured. `read-dedup-guard`
+assumes `StartLine`/`EndLine` because its sibling `replace_file_content` uses
+exactly those names. If that is wrong the guard fails **open** on ranged reads — it
+can never wrongly block one.
 
-`view_file` / `write_to_file` / `replace_file_content` **arg key names**. The
-pattern is PascalCase (`run_command`→`CommandLine`, `list_dir`→`DirectoryPath`,
-both observed), but the agy quota ran out mid-probe before the file tools were
-captured. The guards therefore accept a candidate list
-(`AbsolutePath`/`TargetFile`/`FilePath`/`Path`/…) and fail **open** on a miss, so
-a wrong key can only weaken the `*.md` skip and the read-dedup range escape hatch
-— it can never block a legitimate edit.
-
-To confirm in ~1 minute once quota resets, log one real payload:
+To capture a payload for any tool, log one live invocation:
 
 ```bash
 cat > ~/.gemini/config/hooks.json <<'EOF'
@@ -410,13 +453,13 @@ cat > ~/.gemini/config/hooks.json <<'EOF'
   "command":"cat >> /tmp/agy-args.jsonl; printf '\n' >> /tmp/agy-args.jsonl; printf '%s' '{\"decision\":\"allow\"}'"}]}]}}
 EOF
 cd /tmp && printf 'a\nb\n' > p.txt
-agy -p "Read p.txt then change 'b' to 'B' in place." --dangerously-skip-permissions
+agy -p "Read p.txt then change 'b' to 'B' in place." --dangerously-skip-permissions --print-timeout 300s
 jq -c '{tool:.toolCall.name, argKeys:(.toolCall.args|keys)}' /tmp/agy-args.jsonl | sort -u
-# then: rm ~/.gemini/config/hooks.json && bash install.sh --agy
+# then restore: cp <backup> ~/.gemini/config/hooks.json   (or: bash install.sh --agy)
 ```
 
-Then narrow the candidate lists in `hooks/agy/grounding-guard.sh`,
-`read-dedup-guard.sh`, and `shared-guard-adapter.sh` to the real keys.
+> `agy -p` can take well over 90s per call. A timeout is not a quota error — raise
+> `--print-timeout` (300s worked) before concluding anything is broken.
 
 ---
 

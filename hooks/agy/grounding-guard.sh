@@ -34,13 +34,15 @@ SESSION_ID=$(printf '%s' "$INPUT" | jq -r '.conversationId // empty' 2>/dev/null
 SESSION_ID=$(printf '%s' "$SESSION_ID" | tr -cd 'A-Za-z0-9._-')
 SESSION_ID="${SESSION_ID:-unknown}"
 
-# agy tool args use PascalCase (verified: run_command→CommandLine,
-# list_dir→DirectoryPath). The exact key for the file tools is not yet confirmed
-# (agy quota ran out mid-probe), so accept the plausible spellings. A missed key
-# only means the *.md skip below cannot fire — it never blocks a legit edit.
+# agy tool args are PascalCase, and the path key differs per tool — both observed
+# from live PreToolUse payloads:
+#   write_to_file          → TargetFile (+ CodeContent, Overwrite, Description)
+#   replace_file_content   → TargetFile (+ StartLine, EndLine, TargetContent, …)
+#   view_file              → AbsolutePath
+# TargetFile covers both edit tools this hook matches; AbsolutePath is kept because
+# it is the same concept and costs nothing if agy ever unifies them.
 FILE_PATH=$(printf '%s' "$INPUT" | jq -r '
-  .toolCall.args // {} |
-  (.AbsolutePath // .TargetFile // .TargetFilePath // .FilePath // .Path // .File // empty)
+  .toolCall.args // {} | (.TargetFile // .AbsolutePath // empty)
 ' 2>/dev/null)
 
 case "$TOOL_NAME" in

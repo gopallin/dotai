@@ -92,4 +92,19 @@ grep -Fqx 'name: precommit' "$TEST_HOME/.gemini/config/skills/precommit/SKILL.md
   exit 1
 }
 
+# The installers print a summary of what they installed. It used to be a hardcoded
+# list and had already gone stale (it omitted reviewer-rules), so assert the summary
+# names every skill actually shipped — a doc that lies about coverage is worse than
+# no doc, because it reads as verification.
+for cli in claude codex agy; do
+  summary=$(HOME="$TEST_HOME" bash "$ROOT/scripts/$cli/install.sh" 2>/dev/null \
+            | grep -E '^  skills/ ')
+  for s in "${SKILLS[@]}"; do
+    printf '%s' "$summary" | grep -Fq "$s" || {
+      echo "❌ $cli install summary does not mention skill '$s': $summary" >&2
+      exit 1
+    }
+  done
+done
+
 echo 'SKILLS_INSTALL_TEST_STATUS=PASS'

@@ -36,14 +36,13 @@ command -v jq >/dev/null 2>&1 || allow
 INPUT=$(cat)
 TOOL_NAME=$(printf '%s' "$INPUT" | jq -r '.toolCall.name // empty' 2>/dev/null)
 
-# agy tool args are PascalCase — run_command→CommandLine (verified),
-# list_dir→DirectoryPath (verified). File-tool path keys are not yet confirmed,
-# so try the plausible spellings; an unmatched key just leaves file_path empty,
-# which the shared guards treat as "no file involved".
+# agy tool args are PascalCase, all observed from live PreToolUse payloads:
+#   run_command → CommandLine, Cwd, WaitMsBeforeAsync, BypassSandbox
+#   write_to_file / replace_file_content → TargetFile
+#   view_file → AbsolutePath
 COMMAND=$(printf '%s' "$INPUT" | jq -r '.toolCall.args.CommandLine // empty' 2>/dev/null)
 FILE_PATH=$(printf '%s' "$INPUT" | jq -r '
-  .toolCall.args // {} |
-  (.AbsolutePath // .TargetFile // .TargetFilePath // .FilePath // .Path // .File // empty)
+  .toolCall.args // {} | (.TargetFile // .AbsolutePath // empty)
 ' 2>/dev/null)
 
 PAYLOAD=$(jq -cn --arg c "$COMMAND" --arg f "$FILE_PATH" \

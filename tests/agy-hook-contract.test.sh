@@ -100,18 +100,26 @@ expect_decision "stop-guard: loop brake at executionNum 3 → allow" \
 
 expect_decision "grounding-guard: first code edit, no grounding → deny" \
   hooks/agy/grounding-guard.sh \
-  "$(pretool_payload write_to_file '{"AbsolutePath":"/x/a.php"}' "$TRANSCRIPT_CLEAN")" \
+  "$(pretool_payload write_to_file '{"TargetFile":"/x/a.php","CodeContent":"x","Overwrite":false}' "$TRANSCRIPT_CLEAN")" \
   deny "$REPO"
 
 expect_decision "grounding-guard: GROUNDING_STATUS=PASS present → allow" \
   hooks/agy/grounding-guard.sh \
-  "$(pretool_payload write_to_file '{"AbsolutePath":"/x/b.php"}' "$TRANSCRIPT_GROUNDED")" \
+  "$(pretool_payload write_to_file '{"TargetFile":"/x/b.php","CodeContent":"x"}' "$TRANSCRIPT_GROUNDED")" \
   allow "$REPO"
 
 expect_decision "grounding-guard: markdown edit → allow" \
   hooks/agy/grounding-guard.sh \
-  "$(pretool_payload write_to_file '{"AbsolutePath":"/x/README.md"}' "$TRANSCRIPT_CLEAN")" \
+  "$(pretool_payload write_to_file '{"TargetFile":"/x/README.md","CodeContent":"x"}' "$TRANSCRIPT_CLEAN")" \
   allow "$REPO"
+
+# The gate only fires on the FIRST non-doc edit per conversation, and the case
+# above already consumed it — reset so this asserts the matcher, not the counter.
+cleanup_markers
+expect_decision "grounding-guard: replace_file_content also gated (TargetFile arg)" \
+  hooks/agy/grounding-guard.sh \
+  "$(pretool_payload replace_file_content '{"TargetFile":"/x/c.php","StartLine":1,"EndLine":2,"TargetContent":"a","ReplacementContent":"b"}' "$TRANSCRIPT_CLEAN")" \
+  deny "$REPO"
 
 expect_decision "grounding-guard: unrelated tool → allow" \
   hooks/agy/grounding-guard.sh \
@@ -192,7 +200,7 @@ if [ "$BG_MATCHERS" = "run_command" ]; then ok; else
 fi
 
 OUT3=$(cd "$MAINREPO" && printf '%s' \
-  "$(pretool_payload write_to_file '{"AbsolutePath":"/x/a.php"}' "$TRANSCRIPT_CLEAN")" \
+  "$(pretool_payload write_to_file '{"TargetFile":"/x/a.php","CodeContent":"x","Overwrite":false}' "$TRANSCRIPT_CLEAN")" \
   | bash "$ROOT/hooks/agy/shared-guard-adapter.sh" "$ROOT/hooks/shared/branch-guard.sh" 2>/dev/null)
 if printf '%s' "$OUT3" | jq -e '.reason // "" | test("fail-open")' >/dev/null 2>&1; then
   ok   # documents the known fail-open, which is why the matcher above excludes edits

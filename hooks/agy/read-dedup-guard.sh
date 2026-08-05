@@ -31,16 +31,14 @@ SESSION_ID="${SESSION_ID:-unknown}"
 
 [[ "$TOOL_NAME" != "view_file" ]] && allow
 
-# PascalCase args (verified pattern: run_command→CommandLine, list_dir→
-# DirectoryPath). The exact view_file key is not yet confirmed — accept the
-# plausible spellings; an unmatched key fails open rather than blocking wrongly.
+# view_file's args are `AbsolutePath` for a whole-file read — observed from a live
+# PreToolUse payload. A ranged read was NOT captured (agy reaches for run_command
+# when asked for specific lines), so the range keys below follow the naming its
+# sibling tool uses: replace_file_content carries StartLine/EndLine. If that guess
+# is wrong the guard fails OPEN on ranged reads — it can never wrongly block one.
 ARGS=$(printf '%s' "$INPUT" | jq -c '.toolCall.args // {}' 2>/dev/null)
-FILE_PATH=$(printf '%s' "$ARGS" | jq -r '
-  (.AbsolutePath // .TargetFile // .TargetFilePath // .FilePath // .Path // .File // empty)
-' 2>/dev/null)
-RANGE=$(printf '%s' "$ARGS" | jq -r '
-  (.StartLine // .StartLineOneIndexed // .Offset // .EndLine // .EndLineOneIndexed // .Limit // empty)
-' 2>/dev/null)
+FILE_PATH=$(printf '%s' "$ARGS" | jq -r '(.AbsolutePath // .TargetFile // empty)' 2>/dev/null)
+RANGE=$(printf '%s' "$ARGS" | jq -r '(.StartLine // .EndLine // empty)' 2>/dev/null)
 
 [[ -z "$FILE_PATH" ]] && allow
 
