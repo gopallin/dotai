@@ -126,40 +126,16 @@ expect_decision "grounding-guard: unrelated tool → allow" \
   "$(pretool_payload run_command '{"CommandLine":"ls"}' "$TRANSCRIPT_CLEAN")" \
   allow "$REPO"
 
-# ── read-dedup-guard (PreToolUse / view_file) ─────────────────────────────────
-
-CONV="dedup-$$"
-dedup_payload() {
-  jq -cn --arg n "${2:-view_file}" --argjson a "$1" --arg c "$CONV" \
-    '{toolCall:{name:$n,args:$a}, conversationId:$c, stepIdx:1}'
-}
-rm -f "/tmp/dotai_agy_reads_${CONV}"
-
-expect_decision "read-dedup: first full read → allow" \
-  hooks/agy/read-dedup-guard.sh "$(dedup_payload '{"AbsolutePath":"/x/dup.php"}')" allow
-
-expect_decision "read-dedup: second full read of same file → deny" \
-  hooks/agy/read-dedup-guard.sh "$(dedup_payload '{"AbsolutePath":"/x/dup.php"}')" deny
-
-expect_decision "read-dedup: ranged re-read → allow (escape hatch)" \
-  hooks/agy/read-dedup-guard.sh \
-  "$(dedup_payload '{"AbsolutePath":"/x/dup.php","StartLine":10,"EndLine":20}')" allow
-rm -f "/tmp/dotai_agy_reads_${CONV}"
-
-# ── conversationId sanitisation ───────────────────────────────────────────────
-# conversationId comes from the hook payload and is interpolated into a /tmp
-# marker path, so path separators must not survive.
-TRAVERSAL="../../../$TMP/pwned"
-EVIL=$(jq -cn --arg n view_file --arg c "$TRAVERSAL" \
-  '{toolCall:{name:$n,args:{AbsolutePath:"/x/e.php"}}, conversationId:$c, stepIdx:1}')
-OUT4=$(printf '%s' "$EVIL" | bash "$ROOT/hooks/agy/read-dedup-guard.sh" 2>/dev/null)
-if printf '%s' "$OUT4" | jq -e '.decision == "allow"' >/dev/null 2>&1; then ok; else
-  bad "read-dedup: traversal conversationId should still return a valid decision, got: $OUT4"
-fi
-if [ ! -e "$TMP/pwned" ] && [ ! -e "$TMP/dotai_agy_reads_$TMP/pwned" ]; then ok; else
-  bad "read-dedup: conversationId traversal escaped the /tmp marker path"
-fi
-rm -f /tmp/dotai_agy_reads_*TMPpwned* 2>/dev/null
+# ── retired guards must stay gone ─────────────────────────────────────────────
+# read-dedup-guard and complexity-guard were removed by the prompt-layer ablation
+# (docs/ABLATION.md). Their contract tests are replaced by an existence check, so
+# a re-added copy fails loudly instead of silently reintroducing the behaviour.
+for gone in hooks/agy/read-dedup-guard.sh hooks/claude/read-dedup-guard.sh \
+            hooks/shared/complexity-guard.sh; do
+  if [ ! -e "$ROOT/$gone" ]; then ok; else
+    bad "retired guard reappeared: $gone (see docs/ABLATION.md before re-adding)"
+  fi
+done
 
 # ── shared-guard-adapter (exit code → JSON decision) ──────────────────────────
 
@@ -189,23 +165,37 @@ expect_decision "adapter: glab-guard denies glab" \
   "$(pretool_payload run_command '{"CommandLine":"glab mr list"}' "$TRANSCRIPT_CLEAN")" \
   deny "$REPO" hooks/shared/glab-guard.sh
 
-# branch-guard fails OPEN (with a warning on stderr) when there is no shell
-# command to inspect — see hooks/shared/branch-guard.sh lines 79-88. Registering
-# it on agy's file-edit tools would therefore turn every edit into a noisy
-# {"decision":"allow","reason":"…fail-open…"} instead of a block, so it must stay
-# scoped to run_command until that shared guard handles the file-edit case.
-BG_MATCHERS=$(jq -r '.["dotai-branch-guard"].PreToolUse[].matcher' "$ROOT/hooks/agy/hooks.json")
-if [ "$BG_MATCHERS" = "run_command" ]; then ok; else
-  bad "hooks.json: dotai-branch-guard matcher should be run_command only, got: $BG_MATCHERS"
+# branch-guard USED to fail open on any payload without a shell command, which
+# silently included every file edit — so it was scoped to run_command only and this
+# test pinned the fail-open as expected behaviour. That was the bug, not the design:
+# the guard's whole headline promise is "no edits on master/main". It now reaches its
+# file-path branch, so the edit tools are registered too and an edit must DENY.
+BG_MATCHERS=$(jq -r '.["dotai-branch-guard"].PreToolUse[].matcher' "$ROOT/hooks/agy/hooks.json" | sort | tr '\n' ' ')
+if [ "$BG_MATCHERS" = "run_command write_to_file|replace_file_content|edit_notebook " ]; then ok; else
+  bad "hooks.json: dotai-branch-guard should match run_command + the edit tools, got: $BG_MATCHERS"
 fi
 
 OUT3=$(cd "$MAINREPO" && printf '%s' \
   "$(pretool_payload write_to_file '{"TargetFile":"/x/a.php","CodeContent":"x","Overwrite":false}' "$TRANSCRIPT_CLEAN")" \
   | bash "$ROOT/hooks/agy/shared-guard-adapter.sh" "$ROOT/hooks/shared/branch-guard.sh" 2>/dev/null)
-if printf '%s' "$OUT3" | jq -e '.reason // "" | test("fail-open")' >/dev/null 2>&1; then
-  ok   # documents the known fail-open, which is why the matcher above excludes edits
-else
-  bad "adapter: expected branch-guard's fail-open warning to surface as a reason, got: $OUT3"
+if printf '%s' "$OUT3" | jq -e '.decision == "deny"' >/dev/null 2>&1; then ok; else
+  bad "adapter: non-doc edit on main must deny, got: $OUT3"
+fi
+
+# ...but a documentation edit on main still passes, same as the Claude path.
+OUT3B=$(cd "$MAINREPO" && printf '%s' \
+  "$(pretool_payload write_to_file '{"TargetFile":"/x/README.md","CodeContent":"x","Overwrite":false}' "$TRANSCRIPT_CLEAN")" \
+  | bash "$ROOT/hooks/agy/shared-guard-adapter.sh" "$ROOT/hooks/shared/branch-guard.sh" 2>/dev/null)
+if printf '%s' "$OUT3B" | jq -e '.decision == "allow"' >/dev/null 2>&1; then ok; else
+  bad "adapter: .md edit on main should allow, got: $OUT3B"
+fi
+
+# A read-only command on main must NOT be denied — the old whitelist blocked these.
+OUT3C=$(cd "$MAINREPO" && printf '%s' \
+  "$(pretool_payload run_command '{"CommandLine":"wc -l CLAUDE.md | tail -5"}' "$TRANSCRIPT_CLEAN")" \
+  | bash "$ROOT/hooks/agy/shared-guard-adapter.sh" "$ROOT/hooks/shared/branch-guard.sh" 2>/dev/null)
+if printf '%s' "$OUT3C" | jq -e '.decision == "allow"' >/dev/null 2>&1; then ok; else
+  bad "adapter: read-only command on main should allow, got: $OUT3C"
 fi
 
 # ── context-budget-guard (PreInvocation → injectSteps, not stderr) ────────────
@@ -252,11 +242,15 @@ if [ -z "$BADEVENTS" ]; then ok; else
 fi
 
 # Matchers must reference agy's real tool names.
+# `view_file` is no longer required: read-dedup-guard was the only hook that gated
+# reads and it was retired (docs/ABLATION.md). The point of this check is that the
+# names are REAL, which the negative assertion below enforces — not that every tool
+# is covered.
 if jq -e '[.[] | .PreToolUse[]?.matcher] | join("|") |
-          (test("write_to_file") and test("view_file") and test("run_command"))' "$HJ" >/dev/null 2>&1; then
+          (test("write_to_file") and test("replace_file_content") and test("run_command"))' "$HJ" >/dev/null 2>&1; then
   ok
 else
-  bad "hooks.json: PreToolUse matchers must use agy tool names (write_to_file/view_file/run_command)"
+  bad "hooks.json: PreToolUse matchers must use agy tool names (write_to_file/replace_file_content/run_command)"
 fi
 
 if jq -e '[.[] | .PreToolUse[]?.matcher] | join("|") |

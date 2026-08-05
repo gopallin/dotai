@@ -2,7 +2,7 @@
 #
 # shared-guard-adapter.sh (agy CLI — PreToolUse protocol translator)
 #
-# The shared guards (branch-guard, glab-guard, complexity-guard) speak the
+# The shared guards (branch-guard, glab-guard) speak the
 # Claude/Codex contract: snake_case {tool_input:{command,file_path}} on stdin,
 # exit 2 + stderr to block. agy speaks camelCase {toolCall:{name,args}} on stdin
 # and reads a JSON decision from stdout, ignoring the exit code entirely.
@@ -52,8 +52,8 @@ PAYLOAD=$(jq -cn --arg c "$COMMAND" --arg f "$FILE_PATH" \
 STDERR_FILE=$(mktemp)
 trap 'rm -f "$STDERR_FILE"' EXIT
 
-# CLAUDE_TOOL_NAME for the guards that read it; $1 for complexity-guard, which
-# takes the tool name positionally.
+# The tool name is passed both ways — as CLAUDE_TOOL_NAME and positionally as $1 —
+# because the shared guards have historically read it either way.
 printf '%s' "$PAYLOAD" \
   | CLAUDE_TOOL_NAME="$TOOL_NAME" bash "$GUARD" "$TOOL_NAME" >/dev/null 2>"$STDERR_FILE"
 STATUS=$?

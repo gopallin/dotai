@@ -23,31 +23,11 @@
         ]
       },
       {
-        "matcher": "Read",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/claude/read-dedup-guard.sh",
-            "timeout": 10
-          }
-        ]
-      },
-      {
         "matcher": "Bash|Edit|Write|MultiEdit|Read|Grep|Glob",
         "hooks": [
           {
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/claude/context-budget-guard.sh",
-            "timeout": 5
-          }
-        ]
-      },
-      {
-        "matcher": "Grep|Read|Glob|grep_search|read_file|glob|list_directory",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/shared/complexity-guard.sh",
             "timeout": 5
           }
         ]
@@ -70,8 +50,29 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/stop-guard.sh",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/claude/stop-guard.sh",
             "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/claude/handoff-reminder.sh",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/claude/stack-rules.sh",
+            "timeout": 5
           }
         ]
       }

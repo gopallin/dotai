@@ -47,7 +47,13 @@ while lying. (Three installers claimed 5 skills after a 6th was added.)
 | skills | `~/.claude/skills/` | `~/.codex/skills/` | `~/.gemini/config/skills/` |
 | commands | `~/.claude/commands/` | `~/.codex/prompts/` | **none** — ship as skills |
 | hooks cfg | `settings.json` | `hooks.json` | `~/.gemini/config/hooks.json` |
-| rules | `~/.claude/rules/` | **no mechanism** | `~/.gemini/rules/` |
+| rules | `~/.claude/dotai-rules/` + `stack-rules.sh` | **no mechanism** | `~/.gemini/rules/` |
+
+**Stack rules deliberately avoid `~/.claude/rules/`.** Claude Code auto-loads every
+file in that directory with no path filtering, so anything placed there loads in
+every project forever. dotai installs to `dotai-rules/` — *not* auto-loaded — and a
+`SessionStart` hook emits only the detected stack's file. Putting a stack rules file
+back under `rules/` silently restores the always-on behaviour.
 
 agy's global root is `~/.gemini/config/`, **not** `~/.gemini/`. Codex has no
 `rules/` mechanism, so shared content referenced by a skill must not live in
@@ -106,7 +112,13 @@ Never log a token or echo it into an error message.
 `[doc]`-only claim as established fact. (Three docs claimed `rules/` was
 "path-filtered". Nothing filters it — every rules file loads in every project.
 That false belief is what made it look fine to put one project's table names in a
-globally-installed file.)
+globally-installed file. Fixed by `hooks/claude/stack-rules.sh`, which does the
+filtering the docs had merely assumed.)
+
+**A newly registered hook has not fired until you have seen it fire.** Registration
+landing in `settings.json` is not evidence — that is the same "looks installed, does
+nothing" class as an inert matcher. State a new hook's status as `[unverified]` until
+a live session confirms it, and say what would confirm it.
 
 **Installers must be idempotent and must clean up the previous layout.** Run twice
 in a temp `HOME` in tests. An upgrade that leaves the old files behind produces a

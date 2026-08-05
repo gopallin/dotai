@@ -108,11 +108,6 @@ cp "$DOTAI_DIR/hooks/agy/grounding-guard.sh" "$CLAUDE_DIR/hooks/agy/grounding-gu
 chmod +x "$CLAUDE_DIR/hooks/agy/grounding-guard.sh"
 echo "✅ agy/grounding-guard.sh → $CLAUDE_DIR/hooks/agy/grounding-guard.sh"
 
-# read-dedup-guard (blocks full re-reads of files already in context)
-cp "$DOTAI_DIR/hooks/claude/read-dedup-guard.sh" "$CLAUDE_DIR/hooks/claude/read-dedup-guard.sh"
-chmod +x "$CLAUDE_DIR/hooks/claude/read-dedup-guard.sh"
-echo "✅ claude/read-dedup-guard.sh → $CLAUDE_DIR/hooks/claude/read-dedup-guard.sh"
-
 # context-budget-guard (advisory: reminds to /clear when the session grows large)
 cp "$DOTAI_DIR/hooks/claude/context-budget-guard.sh" "$CLAUDE_DIR/hooks/claude/context-budget-guard.sh"
 chmod +x "$CLAUDE_DIR/hooks/claude/context-budget-guard.sh"
@@ -123,12 +118,13 @@ cp "$DOTAI_DIR/hooks/claude/handoff-reminder.sh" "$CLAUDE_DIR/hooks/claude/hando
 chmod +x "$CLAUDE_DIR/hooks/claude/handoff-reminder.sh"
 echo "✅ claude/handoff-reminder.sh → $CLAUDE_DIR/hooks/claude/handoff-reminder.sh"
 
+# stack-rules (SessionStart: emits only the detected stack's rules file)
+cp "$DOTAI_DIR/hooks/claude/stack-rules.sh" "$CLAUDE_DIR/hooks/claude/stack-rules.sh"
+chmod +x "$CLAUDE_DIR/hooks/claude/stack-rules.sh"
+echo "✅ claude/stack-rules.sh → $CLAUDE_DIR/hooks/claude/stack-rules.sh"
+
 # Shared hooks
 mkdir -p "$CLAUDE_DIR/hooks/shared"
-cp "$DOTAI_DIR/hooks/shared/complexity-guard.sh" "$CLAUDE_DIR/hooks/shared/complexity-guard.sh"
-chmod +x "$CLAUDE_DIR/hooks/shared/complexity-guard.sh"
-echo "✅ shared/complexity-guard.sh → $CLAUDE_DIR/hooks/shared/complexity-guard.sh"
-
 cp "$DOTAI_DIR/hooks/shared/branch-guard.sh" "$CLAUDE_DIR/hooks/shared/branch-guard.sh"
 chmod +x "$CLAUDE_DIR/hooks/shared/branch-guard.sh"
 echo "✅ shared/branch-guard.sh     → $CLAUDE_DIR/hooks/shared/branch-guard.sh"
@@ -136,6 +132,17 @@ echo "✅ shared/branch-guard.sh     → $CLAUDE_DIR/hooks/shared/branch-guard.s
 cp "$DOTAI_DIR/hooks/shared/glab-guard.sh" "$CLAUDE_DIR/hooks/shared/glab-guard.sh"
 chmod +x "$CLAUDE_DIR/hooks/shared/glab-guard.sh"
 echo "✅ shared/glab-guard.sh       → $CLAUDE_DIR/hooks/shared/glab-guard.sh"
+
+# Remove hooks retired by the prompt-layer ablation (docs/ABLATION.md). Unregistering
+# them in settings.json is not enough — the scripts stay on disk, and a leftover file
+# is how a deleted guard quietly comes back (someone re-adds one settings.json line
+# and it works again, with none of the reasoning that removed it).
+for gone in claude/read-dedup-guard shared/complexity-guard; do
+  if [[ -f "$CLAUDE_DIR/hooks/$gone.sh" ]]; then
+    rm -f "$CLAUDE_DIR/hooks/$gone.sh"
+    echo "🧹 removed retired $CLAUDE_DIR/hooks/$gone.sh"
+  fi
+done
 
 # ── 3b. Status line (Claude Code only) ────────────────────────────────────────
 
@@ -170,19 +177,13 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
   ] + (.hooks.Stop // [] | map(select(
     (.hooks[0].command | test("claude/stop-guard\\.sh$")) | not
   )))) |
-  # Register PreToolUse hooks (complexity-guard + branch-guard)
+  # Register PreToolUse hooks
   .hooks.PreToolUse = ([
     {
-      "matcher": "Grep|Read|Glob|grep_search|read_file|glob|list_directory",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "bash \($home)/.claude/hooks/shared/complexity-guard.sh"
-        }
-      ]
-    },
-    {
-      "matcher": "Bash",
+      # Edit|Write|MultiEdit belong here, not just Bash: branch-guard also gates
+      # non-doc file edits on master/main, and with a Bash-only matcher that half
+      # of the guard was never reachable.
+      "matcher": "Bash|Edit|Write|MultiEdit",
       "hooks": [
         {
           "type": "command",
@@ -212,16 +213,6 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
       ]
     },
     {
-      "matcher": "Read",
-      "hooks": [
-        {
-          "type": "command",
-          "command": "bash \($home)/.claude/hooks/claude/read-dedup-guard.sh",
-          "timeout": 10
-        }
-      ]
-    },
-    {
       "matcher": "Bash|Edit|Write|MultiEdit|Read|Grep|Glob",
       "hooks": [
         {
@@ -232,6 +223,10 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
       ]
     }
   ] + (.hooks.PreToolUse // [] | map(select(
+    # This regex is a CLEANUP list, not a registration list — it must keep naming
+    # `complexity` and `read-dedup` even though neither is installed any more, so
+    # that a re-install prunes their stale entries from an older settings.json.
+    # Removing a name here orphans its registration forever. See docs/ABLATION.md.
     (.hooks[0].command | test("shared/(complexity|branch|glab)-guard\\.sh$|claude/(grounding|read-dedup|context-budget)-guard\\.sh$")) | not
   )))) |
   # Register SessionStart hook (handoff-reminder fires only after /clear)
@@ -246,8 +241,19 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
         }
       ]
     }
+    ,
+    {
+      # No matcher: stack rules apply to every session start, not just /clear.
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash \($home)/.claude/hooks/claude/stack-rules.sh",
+          "timeout": 5
+        }
+      ]
+    }
   ] + (.hooks.SessionStart // [] | map(select(
-    (.hooks[0].command | test("claude/handoff-reminder\\.sh$")) | not
+    (.hooks[0].command | test("claude/(handoff-reminder|stack-rules)\\.sh$")) | not
   )))) |
   # Register status line (Claude Code only) — dotai owns this key
   .statusLine = {
@@ -260,13 +266,29 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
 echo "$UPDATED" > "$SETTINGS"
 echo "✅ Hooks registered   → $SETTINGS"
 
-# ── 5. Install rules (global) ─────────────────────────────────────────────────
+# ── 5. Install stack rules (conditionally loaded, NOT global) ─────────────────
+#
+# These go to dotai-rules/, NOT rules/. Claude Code auto-loads every file under
+# ~/.claude/rules/ with no path filtering, so the previous layout put all three
+# stacks into every session of every project. stack-rules.sh (SessionStart) now
+# detects the project and emits only the matching file.
 
-mkdir -p "$CLAUDE_DIR/rules"
-cp "$DOTAI_DIR/rules/laravel.md" "$CLAUDE_DIR/rules/laravel.md"
-cp "$DOTAI_DIR/rules/vue.md"     "$CLAUDE_DIR/rules/vue.md"
-cp "$DOTAI_DIR/rules/node.md"    "$CLAUDE_DIR/rules/node.md"
-echo "✅ Rules              → $CLAUDE_DIR/rules/"
+mkdir -p "$CLAUDE_DIR/dotai-rules"
+cp "$DOTAI_DIR/rules/laravel.md" "$CLAUDE_DIR/dotai-rules/laravel.md"
+cp "$DOTAI_DIR/rules/vue.md"     "$CLAUDE_DIR/dotai-rules/vue.md"
+cp "$DOTAI_DIR/rules/node.md"    "$CLAUDE_DIR/dotai-rules/node.md"
+echo "✅ Stack rules        → $CLAUDE_DIR/dotai-rules/ (loaded per-project by stack-rules.sh)"
+
+# Clean up the previous always-loaded copies. Without this the old files keep
+# being auto-loaded forever and the ablation buys nothing — same reason the skills
+# installer removes the legacy flat skills/<name>.md files.
+for stale in laravel vue node; do
+  if [[ -f "$CLAUDE_DIR/rules/$stale.md" ]]; then
+    rm -f "$CLAUDE_DIR/rules/$stale.md"
+    echo "🧹 removed always-loaded $CLAUDE_DIR/rules/$stale.md"
+  fi
+done
+rmdir "$CLAUDE_DIR/rules" 2>/dev/null || true
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 
@@ -282,14 +304,12 @@ echo "  /prompt          turn a rough idea into a structured, AI-ready task prom
 echo "  /ground          pre-implementation grounding check (read patterns + verify data)"
 echo "  stop-guard       auto-blocks stopping if /precommit was skipped or failed"
 echo "  grounding-guard  auto-blocks the first code edit until /ground passes"
-echo "  complexity-guard alerts on manual exploration loops"
-echo "  read-dedup-guard blocks full re-reads of files already in context"
 echo "  context-budget-guard reminds you to /clear when the session grows large"
 echo "  handoff-reminder after /clear: offers /resume+/handoff or transcript reconstruction"
-echo "  branch-guard     prevents accidental pushes to master/main"
+echo "  branch-guard     blocks WRITE commands and non-doc edits on master/main (reads pass)"
 echo "  glab-guard       blocks glab CLI, directs to curl + \$GITLAB_TOKEN + jq"
+echo "  stack-rules      loads only the detected stack's rules (laravel|vue|node)"
 echo "  statusline       model · context-usage bar · /usage rate-limit bars"
-echo "  rules/           laravel.md · vue.md · node.md (loaded globally, all projects)"
 # Derived from what was actually installed — a hardcoded list silently goes
 # stale the moment a skill is added (it already had, omitting reviewer-rules).
 echo "  skills/          ${INSTALLED_SKILLS:-(none)}"

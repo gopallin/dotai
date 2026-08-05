@@ -15,6 +15,66 @@ dotai's solution: replace **CLAUDE.md rules (depends on AI cooperation)** with *
 
 ---
 
+## §Prompt Minimalism — READ THIS BEFORE ADDING ANY RULE
+
+⚠️ **The failure mode of this repo is not too few rules. It is too many.**
+
+By 2026-08 `GLOBAL_RULES.md` had grown to 11,941 bytes, loaded into *every*
+session of *every* project, and `rules/{laravel,vue,node}.md` all loaded
+unconditionally on top. Roughly **3,700 tokens of standing instructions per
+session**, of which the majority described behaviour a current model already had —
+and several actively *reduced* capability. It was ablated back to ~3,400 bytes.
+See [`docs/ABLATION.md`](docs/ABLATION.md) for the full deleted list and reasoning.
+
+### The five principles
+
+Source: Anthropic cut Claude Code's own system prompt by **>80%** at the Opus 5
+release. Boris Cherny's account, via
+<https://www.bnext.com.tw/article/91670/claude-code-prompt-reduction-agent-verification>.
+
+1. **Most instructions are patches for an older model.** They exist to fix "things
+   the model should do but didn't". Each model generation silently obsoletes a
+   batch of them, and nothing tells you which — the rule keeps costing tokens and
+   starts costing capability. An eval set stays valid for only 1–3 generations.
+
+2. **Fewer rules make the model smarter, not sloppier.** Standing instructions
+   crowd out the actual task, and contradictory ones (this repo shipped
+   *"no trailing summaries"* alongside *"summarise after every significant step"*)
+   are worse than having neither.
+
+3. **Spend the effort on verification, not on prompt wording.** A hook that checks
+   the outcome beats a paragraph asking for the outcome. This is just dotai's own
+   philosophy — *use code to ensure it* — applied to dotai itself.
+
+4. **Delete first, measure, then restore.** Ablate: remove a rule, work normally,
+   and put it back only when the model demonstrably falls into the same pit
+   **twice**. Once is noise. Assume a deleted rule is unnecessary until proven
+   otherwise — never the reverse.
+
+5. **Never let a rule cost more than it saves.** Global prose is the most
+   expensive channel (every session, every project) and the weakest enforcement.
+   Prefer, in order:
+
+   > **hook → skill/command (opt-in) → project `CLAUDE.md` → global prose**
+
+   Global prose is the *last* resort, reserved for what the model cannot derive:
+   this machine's environment, credentials, and the owner's non-obvious policies.
+
+### Gate for any new rule
+
+Before adding standing instruction text anywhere, answer all four:
+
+- [ ] Has the model actually got this wrong **twice**? (Not "might get wrong".)
+- [ ] Can a script detect and block it instead? If yes → write the hook, not the prose.
+- [ ] Does it need to load for *every* project? If no → project `CLAUDE.md` or a skill.
+- [ ] Does it contradict, or merely restate, something already in `GLOBAL_RULES.md`
+      or the harness's own system prompt? If so → fix the existing rule, don't append.
+
+Any "no" means don't add it. **Re-run the ablation at every major model release**
+(next due 2027-02 at the latest).
+
+---
+
 ## Key Concepts
 
 Before developing this project, understand the difference between these four components:
@@ -157,9 +217,9 @@ Ran but FAIL? Still cannot stop.
 │   ├── claude/
 │   │   ├── stop-guard.sh       ← Claude Code Stop event hook
 │   │   ├── grounding-guard.sh  ← Claude PreToolUse hook (blocks first un-grounded edit)
-│   │   ├── read-dedup-guard.sh ← Claude PreToolUse hook (blocks full re-reads of files already in context)
 │   │   ├── context-budget-guard.sh ← Claude PreToolUse hook (advisory: reminds to /clear when session grows large)
-│   │   └── handoff-reminder.sh ← Claude SessionStart hook (after /clear: offer /resume+/handoff or transcript rebuild)
+│   │   ├── handoff-reminder.sh ← Claude SessionStart hook (after /clear: offer /resume+/handoff or transcript rebuild)
+│   │   └── stack-rules.sh      ← Claude SessionStart hook (emits ONLY the detected stack's rules file)
 │   ├── codex/
 │   │   ├── stop-guard.sh       ← Codex CLI Stop event hook
 │   │   ├── grounding-guard.sh  ← Codex PreToolUse hook (blocks first un-grounded apply_patch)
@@ -170,18 +230,26 @@ Ran but FAIL? Still cannot stop.
 │   │   ├── stop-guard.sh       ← agy Stop hook (blocks the stop if PRECOMMIT_STATUS=PASS absent)
 │   │   ├── grounding-guard.sh  ← agy PreToolUse (write_to_file|replace_file_content|edit_notebook)
 │   │   ├── context-budget-guard.sh ← agy PreInvocation advisory (injects an ephemeralMessage)
-│   │   ├── read-dedup-guard.sh ← agy PreToolUse/view_file dedup block
 │   │   └── shared-guard-adapter.sh ← translates agy's JSON contract ↔ the shared guards' exit codes
 │   └── shared/
-│       ├── complexity-guard.sh ← shared PreToolUse hook (all CLIs)
-│       └── branch-guard.sh     ← blocks edits/commits on master/main
-├── rules/                      ← ⚠️ loaded GLOBALLY in every project, not path-filtered
-│   ├── laravel.md              ← Laravel-specific guidelines
-│   ├── vue.md                  ← Vue.js-specific guidelines
-│   └── node.md                 ← Node.js-specific guidelines
+│       ├── branch-guard.sh     ← blocks WRITE commands + non-doc edits on master/main (reads pass)
+│       └── glab-guard.sh       ← blocks the `glab` CLI, redirects to curl + $GITLAB_TOKEN
+├── rules/                      ← installed to ~/.claude/dotai-rules/, NOT ~/.claude/rules/
+│   ├── laravel.md              ← Laravel-specific guidelines   ┐ exactly ONE of these
+│   ├── vue.md                  ← Vue.js-specific guidelines    ├ loads per session,
+│   └── node.md                 ← Node.js-specific guidelines   ┘ chosen by stack-rules.sh
 └── docs/                       ← NOT installed; reference material and templates
+    ├── ABLATION.md             ← what was cut from the prompt layer, why, and the re-add rule
     └── reviewer-rules.example.md ← project-specific reviewer rules to copy into a project repo
 ```
+
+**Retired hooks — do not re-add without reading `docs/ABLATION.md`.**
+`read-dedup-guard.sh` (Claude + agy) and `complexity-guard.sh` were deleted in the
+2026-08 ablation: the first duplicated file-state tracking the harness now does
+natively (and its "Edit the file first" escape hatch was wrong in exactly the case
+that needs a re-read), the second was **provably inert** — it read
+`CLAUDE_TOOL_NAME`, which Claude Code never sets, so its `case` never matched.
+`tests/agy-hook-contract.test.sh` now asserts all three files stay absent.
 
 **Where reviewer rules live.** The L1/L2/L3 checklist was inlined in both
 `ground` and `ship` and had already drifted between them, while naming one
@@ -355,8 +423,8 @@ probe did. `settings.json` is still used for `.statusLine`.
 **Event names** — only `PreToolUse`, `PostToolUse`, `PreInvocation`,
 `PostInvocation`, `Stop` exist **[doc]**; `PreToolUse` and `Stop` **[probed]** to
 fire. `AfterAgent` and `BeforeTool` **do not exist** — that is what the old
-`read-dedup-guard` "needs BeforeTool verification" note was really asking about,
-and the answer is that the event was never real.
+(since-retired) `read-dedup-guard`'s "needs BeforeTool verification" note was
+really asking about, and the answer is that the event was never real.
 
 **Config shape.** Top-level keys are hook *names*, not events:
 
@@ -442,10 +510,9 @@ did not always run. Do not rely on two hooks both executing for one tool call.
 ### Still unverified
 
 A **ranged** `view_file` payload. Asked for specific lines, agy reaches for
-`run_command` instead, so the range keys were never captured. `read-dedup-guard`
-assumes `StartLine`/`EndLine` because its sibling `replace_file_content` uses
-exactly those names. If that is wrong the guard fails **open** on ranged reads — it
-can never wrongly block one.
+`run_command` instead, so the range keys were never captured. Nothing depends on
+this any more — the retired `read-dedup-guard` was the only consumer — but the gap
+is recorded in case a future guard needs a `view_file` line range.
 
 To capture a payload for any tool, log one live invocation:
 
@@ -477,6 +544,34 @@ Claude Code-specific.
 
 If agy adds a post-clear session lifecycle event in the future, port
 `hooks/claude/handoff-reminder.sh` using the same pattern.
+
+### `stack-rules.sh` — Claude Code only
+
+Conditional stack-rule loading exists because Claude Code auto-loads
+`~/.claude/rules/*.md` unfiltered, and the fix is a `SessionStart` hook that emits
+only the matching file. Neither sibling CLI needs or can host it:
+
+- **Codex** has **no `rules/` mechanism at all**, so there is nothing loading
+  unconditionally and nothing to filter.
+- **agy** reads global rules from a single `~/.gemini/config/AGENTS.md`, not a
+  directory, and has no `SessionStart` event (see `handoff-reminder.sh` above).
+
+So `scripts/{codex,agy}/install.sh` deliberately do not reference `stack-rules.sh`.
+That is an absence with a reason, not a missed parity item — do not "fix" it by
+adding a copy that cannot fire.
+
+**Status: `[unverified]`.** The `SessionStart` registration is in
+`~/.claude/settings.json` and the hook has been run directly against real payloads
+(`tests/stack-rules.test.sh`, 15 assertions), but it has **not yet been observed
+firing inside a live session** — a matcher-less `SessionStart` entry is assumed to
+match every source. To confirm, restart Claude Code in a Laravel or Vue repo and
+check the stack-rules header appears in context:
+
+```bash
+# in a repo with ./artisan — after restarting Claude Code, ask:
+#   "print the first line of any stack rules you were given"
+# expect: "# Stack rules: laravel (auto-loaded by dotai stack-rules.sh …)"
+```
 
 ### Commands — agy has no such concept
 

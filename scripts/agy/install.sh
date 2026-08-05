@@ -108,14 +108,9 @@ cp "$DOTAI_DIR/hooks/agy/grounding-guard.sh" "$GEMINI_DIR/hooks/grounding-guard.
 chmod +x "$GEMINI_DIR/hooks/grounding-guard.sh"
 echo "✅ grounding-guard.sh → $GEMINI_DIR/hooks/grounding-guard.sh"
 
-# complexity-guard (invoked through shared-guard-adapter.sh, see hooks.json)
-cp "$DOTAI_DIR/hooks/shared/complexity-guard.sh" "$GEMINI_DIR/hooks/shared/complexity-guard.sh"
-chmod +x "$GEMINI_DIR/hooks/shared/complexity-guard.sh"
-echo "✅ shared/complexity-guard.sh → $GEMINI_DIR/hooks/shared/complexity-guard.sh"
-
 # shared-guard-adapter — translates agy's JSON hook contract to the exit-code
-# contract the shared guards use, so branch/glab/complexity guards can auto-fire
-# on PreToolUse instead of being "manual invoke only".
+# contract the shared guards use, so branch/glab guards can auto-fire on
+# PreToolUse instead of being "manual invoke only".
 cp "$DOTAI_DIR/hooks/agy/shared-guard-adapter.sh" "$GEMINI_DIR/hooks/shared-guard-adapter.sh"
 chmod +x "$GEMINI_DIR/hooks/shared-guard-adapter.sh"
 echo "✅ shared-guard-adapter.sh → $GEMINI_DIR/hooks/shared-guard-adapter.sh"
@@ -133,10 +128,15 @@ cp "$DOTAI_DIR/hooks/agy/context-budget-guard.sh" "$GEMINI_DIR/hooks/context-bud
 chmod +x "$GEMINI_DIR/hooks/context-budget-guard.sh"
 echo "✅ context-budget-guard.sh → $GEMINI_DIR/hooks/context-budget-guard.sh"
 
-# read-dedup-guard (PreToolUse on view_file — agy's read tool)
-cp "$DOTAI_DIR/hooks/agy/read-dedup-guard.sh" "$GEMINI_DIR/hooks/read-dedup-guard.sh"
-chmod +x "$GEMINI_DIR/hooks/read-dedup-guard.sh"
-echo "✅ read-dedup-guard.sh → $GEMINI_DIR/hooks/read-dedup-guard.sh"
+# Remove hooks deleted by the prompt-layer ablation (docs/ABLATION.md). An old
+# install left these on disk, and agy's hooks.json is replaced wholesale below, so
+# the files would linger as dead weight rather than being invoked.
+for gone in read-dedup-guard shared/complexity-guard; do
+  if [[ -f "$GEMINI_DIR/hooks/$gone.sh" ]]; then
+    rm -f "$GEMINI_DIR/hooks/$gone.sh"
+    echo "🧹 removed retired $GEMINI_DIR/hooks/$gone.sh"
+  fi
+done
 
 # ── 5. Install rules (framework-specific) ────────────────────────────────────
 
@@ -230,10 +230,8 @@ echo "  /precommit       run lint + build + test"
 echo "  /prompt          turn a rough idea into a structured, AI-ready task prompt"
 echo "  stop-guard       auto-blocks stopping if quality checks were skipped"
 echo "  grounding-guard  auto-blocks the first code edit until /ground passes"
-echo "  complexity-guard alerts on manual exploration loops"
 echo "  context-budget-guard advisory: reminds to start fresh when the session grows large"
-echo "  read-dedup-guard blocks full re-reads of files already in context (view_file)"
-echo "  branch-guard     prevents edits/commands on master/main (PreToolUse)"
+echo "  branch-guard     blocks WRITE commands on master/main, reads pass (PreToolUse)"
 echo "  glab-guard       blocks glab CLI, directs to curl + \$GITLAB_TOKEN + jq"
 echo "  statusline       model · context-usage bar · /usage rate-limit bars"
 echo "  rules/           AGENTS.md · laravel.md · vue.md · node.md (loaded globally, all projects)"
