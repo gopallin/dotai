@@ -86,9 +86,58 @@ else
   PASS=$((PASS+1))
 fi
 
-# GitHub must go through gh, not a curl POST.
+# GitHub needs BOTH paths: gh when present, REST API when it is not. Having only
+# gh is what made step 5 unreachable on a machine without it.
 if grep -q 'gh pr create' "$SKILL"; then PASS=$((PASS+1)); else
   FAIL=$((FAIL+1)); echo "❌ skill has no 'gh pr create' path for GitHub" >&2
+fi
+if grep -q 'repos/\$PROJECT_PATH/pulls' "$SKILL"; then PASS=$((PASS+1)); else
+  FAIL=$((FAIL+1)); echo "❌ skill has no REST API fallback for GitHub" >&2
+fi
+
+# The API base must be derived: GitHub Enterprise is https://<host>/api/v3, so a
+# hardcoded api.github.com silently targets the wrong server — the same class of
+# bug as the hardcoded gitlab.com host.
+if grep -q 'API_BASE' "$SKILL" && grep -q 'api/v3' "$SKILL"; then PASS=$((PASS+1)); else
+  FAIL=$((FAIL+1)); echo "❌ GitHub API base is not derived from \$FORGE_HOST (Enterprise uses /api/v3)" >&2
+fi
+
+# The PR body must be built with jq, not interpolated into a JSON string.
+if grep -q "jq -n --arg t" "$SKILL"; then PASS=$((PASS+1)); else
+  FAIL=$((FAIL+1)); echo "❌ GitHub REST payload is not built with jq -n" >&2
+fi
+
+# A fine-grained PAT expires and its 404 means "repo not granted", not "no repo".
+# Without that mapping the failure reads as a missing repository.
+for code in 401 403 404 422; do
+  grep -q "\`$code\`" "$SKILL" && PASS=$((PASS+1)) || {
+    FAIL=$((FAIL+1)); echo "❌ skill does not explain HTTP $code for the GitHub API" >&2
+  }
+done
+
+# The token must never be echoed. Catch an echo/printf that names the token vars.
+if grep -nE '(echo|printf)[^|]*\$\{?(GITHUB_TOKEN|GH_TOKEN_VAL)' "$SKILL" >/dev/null; then
+  FAIL=$((FAIL+1)); echo "❌ skill echoes the GitHub token" >&2
+else
+  PASS=$((PASS+1))
+fi
+
+# The GitHub path must never SEND a GitLab credential. Match actual use — a
+# PRIVATE-TOKEN header or a Bearer of $GITLAB_TOKEN — not a prose warning that
+# names the variable, which is worth keeping.
+GH_SECTION=$(awk '/^#### 5a\./{f=1} /^#### 5b\./{f=0} f' "$SKILL")
+if printf '%s' "$GH_SECTION" | grep -qE 'PRIVATE-TOKEN|Bearer \$\{?GITLAB_TOKEN'; then
+  FAIL=$((FAIL+1)); echo "❌ GitHub path sends a GitLab credential" >&2
+else
+  PASS=$((PASS+1))
+fi
+
+# Symmetrically, the GitLab path must not send a GitHub token.
+GL_SECTION=$(awk '/^#### 5b\./{f=1} /^#### 5c\./{f=0} f' "$SKILL")
+if printf '%s' "$GL_SECTION" | grep -qE 'GITHUB_TOKEN|GH_TOKEN_VAL'; then
+  FAIL=$((FAIL+1)); echo "❌ GitLab path references a GitHub token" >&2
+else
+  PASS=$((PASS+1))
 fi
 
 echo "PASS=$PASS FAIL=$FAIL"
