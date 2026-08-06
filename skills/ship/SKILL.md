@@ -1,6 +1,6 @@
 ---
 name: ship
-description: Run full test suite, execute L1/L2/L3 simulated code review, commit changes, push feature branch, then open a Merge Request or Pull Request — detecting the forge from `origin` (GitHub via `gh`, GitLab via REST API). Trigger when user says "ship it", "test and push", "open MR", "open PR", or uses /ship.
+description: Run full test suite, execute L1/L2/L3 simulated code review, commit changes, push feature branch, then open a Merge Request or Pull Request — detecting the forge from `origin` and calling its REST API with a scoped token (no forge CLI required). Trigger when user says "ship it", "test and push", "open MR", "open PR", or uses /ship.
 ---
 
 # Ship Workflow (Test, Review, Commit, Push, and open MR/PR)
@@ -13,8 +13,9 @@ Automates the complete release verification and shipping cycle:
 3. Perform simulated L1/L2/L3 Code Review against `git diff`.
 4. Commit with structured discipline (Why, not just What).
 5. Push feature branch to origin.
-6. Open a Merge Request / Pull Request, routed by the detected forge
-   (GitHub → `gh`, GitLab → REST API + `$GITLAB_TOKEN`).
+6. Open a Merge Request / Pull Request, routed by the detected forge — both go
+   through `curl` + `jq` + a scoped token (`$GITHUB_TOKEN` / `$GITLAB_TOKEN`).
+   No forge CLI is required; `gh` is used only if it happens to be installed.
 
 ---
 
@@ -153,23 +154,16 @@ Hostname is a heuristic: a self-hosted GitHub Enterprise or GitLab often sits on
 neutral domain like `git.acme.com` and lands in `unknown`. That is deliberate — go
 to 5c and **ask** rather than firing a POST at the wrong API with a real token.
 
-#### 5a. `route=github` → `gh`, else REST API
+#### 5a. `route=github` → REST API; `gh` only if already installed
 
-Try in this order. **Never fall back to the GitLab API** — that would send
-`$GITLAB_TOKEN` to GitHub.
+**Never fall back to the GitLab API** — that would send `$GITLAB_TOKEN` to GitHub.
 
-**5a-i — `gh` if available** (preferred: it manages its own auth and handles
-GitHub Enterprise hosts without extra config):
+**5a-i — REST API + a fine-grained PAT. This is the default path.** It is
+deliberately the same shape as 5b: `curl` + `jq` + one narrowly scoped token, no
+forge CLI to install and no account-wide OAuth token to manage.
 
-```bash
-if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-  gh pr create --base "$TARGET_BRANCH" --head "$BRANCH" \
-    --title "$(git log -1 --format=%s)" \
-    --body "$(printf '## Summary\n\n%s\n\n---\n*Shipped via /ship with L1/L2/L3 verification*' "$(git log -1 --format=%b)")"
-fi
-```
-
-**5a-ii — REST API + a fine-grained PAT** when `gh` is absent:
+> A missing `gh` is **not** a blocker and must never be reported as one. Go
+> straight to this block.
 
 ```bash
 # Prefer the exported var, but read Keychain directly as a fallback: a shell
@@ -213,14 +207,34 @@ here; fine-grained tokens fail in ways that read like the repo is missing:
 | `404` | repo not in the token's **Repository access** list (not "missing repo") | add the repo to the token |
 | `422` | PR already exists for this branch, or no commits between branches | check for an open PR first |
 
-**5a-iii — neither available:** report the blocker, do not fail silently. Print the
-click-through URL and the PR body so no work is lost:
+**A 401/403/404 here is a token problem, and the table says which one.** Do not
+suggest installing `gh` as the fix — swapping to an account-wide OAuth token to
+work around a missing scope trades a one-line permission edit for a much larger
+blast radius.
+
+**5a-ii — `gh`, only when it is already installed AND authenticated:**
+
+```bash
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  gh pr create --base "$TARGET_BRANCH" --head "$BRANCH" \
+    --title "$(git log -1 --format=%s)" \
+    --body "$(printf '## Summary\n\n%s\n\n---\n*Shipped via /ship with L1/L2/L3 verification*' "$(git log -1 --format=%b)")"
+fi
+```
+
+Worth reaching for on a GitHub Enterprise host, where it resolves the API base and
+auth without extra config. Otherwise 5a-i already covered it.
+
+**5a-iii — no usable token and no `gh`:** report the blocker, do not fail silently.
+Print the click-through URL and the PR body so no work is lost:
 
 ```bash
 echo "https://$FORGE_HOST/$PROJECT_PATH/pull/new/$BRANCH"
-echo "Fix with EITHER: brew install gh && gh auth login"
-echo "            OR: create a fine-grained PAT (Pull requests: write) and store it:"
-echo "                security add-generic-password -a github -s ai-agent-github-token -w"
+echo "Fix: create a fine-grained PAT with these repository permissions —"
+echo "       Pull requests: Read and write   (required to open the PR)"
+echo "       Contents:      Read-only        (enough while pushes go over SSH)"
+echo "     scope it to selected repositories, not All repositories, then store it:"
+echo "       security add-generic-password -a github -s ai-agent-github-token -w"
 ```
 
 Never print the token, and never include it in an error message.
@@ -273,7 +287,10 @@ Report final execution status to the user:
 - ✅ Branch Pushed (`origin/<branch>`)
 - ✅ MR/PR Created (provide direct `web_url` link)
 
-If Step 5 could not complete (no `gh`, no `$GITLAB_TOKEN`, unknown host), say so
-explicitly — steps 1-4 succeeding is **not** "shipped". Report which step blocked,
-why, the exact command that fixes it, and the click-through URL plus the PR body
-text so no work is lost.
+If Step 5 could not complete (token missing, token lacks a permission, unknown
+host), say so explicitly — steps 1-4 succeeding is **not** "shipped". Report which
+step blocked, why, the exact command that fixes it, and the click-through URL plus
+the PR body text so no work is lost.
+
+"`gh` is not installed" is never a valid reason for Step 5 to fail. If that is
+what you are about to report, you skipped 5a-i.
