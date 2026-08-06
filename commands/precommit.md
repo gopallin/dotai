@@ -44,4 +44,11 @@ changes. Do not strip or suppress the `PRECOMMIT_STATUS=` line.
 
 ## Execution
 
-!bash .claude/commands/precommit.sh
+Prefers a project-local override, falls back to the installed pipeline.
+
+The fallback is the point: this line used to name only the relative
+`.claude/commands/precommit.sh`, so in any project without that file `/precommit`
+failed outright, while the installed `~/.claude/commands/precommit.sh` — the real
+pipeline this repo maintains — was never reached at all.
+
+!bash -c '[ -f .claude/commands/precommit.sh ] && exec bash .claude/commands/precommit.sh; exec bash "$HOME/.claude/commands/precommit.sh"'
