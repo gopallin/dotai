@@ -124,6 +124,10 @@ cp "$DOTAI_DIR/hooks/shared/glab-guard.sh" "$CODEX_DIR/hooks/shared/glab-guard.s
 chmod +x "$CODEX_DIR/hooks/shared/glab-guard.sh"
 echo "✅ shared/glab-guard.sh    → $CODEX_DIR/hooks/shared/glab-guard.sh"
 
+cp "$DOTAI_DIR/hooks/shared/secret-guard.sh" "$CODEX_DIR/hooks/shared/secret-guard.sh"
+chmod +x "$CODEX_DIR/hooks/shared/secret-guard.sh"
+echo "✅ shared/secret-guard.sh  → $CODEX_DIR/hooks/shared/secret-guard.sh"
+
 # grounding-guard (blocks the first code edit until /ground passes)
 cp "$DOTAI_DIR/hooks/codex/grounding-guard.sh" "$CODEX_DIR/hooks/grounding-guard.sh"
 chmod +x "$CODEX_DIR/hooks/grounding-guard.sh"
@@ -198,6 +202,16 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
       ]
     },
     {
+      "matcher": "Bash",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash \($home)/.codex/hooks/shared/secret-guard.sh",
+          "timeout": 5
+        }
+      ]
+    },
+    {
       "matcher": "apply_patch",
       "hooks": [
         {
@@ -208,7 +222,7 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
       ]
     }
   ] + (.hooks.PreToolUse // [] | map(select(
-    (.hooks[0].command | test("branch-guard\\.sh$|context-budget-guard\\.sh$|glab-guard\\.sh$|grounding-guard\\.sh$")) | not
+    (.hooks[0].command | test("branch-guard\\.sh$|context-budget-guard\\.sh$|glab-guard\\.sh$|secret-guard\\.sh$|grounding-guard\\.sh$")) | not
   )))) |
   # Register SessionStart hook for handoff reminders after /clear
   .hooks.SessionStart = ([
@@ -248,6 +262,7 @@ echo "  statusline       model · context · token usage · rate limits · git b
 echo "  stop-guard       auto-blocks stopping if verifications incomplete"
 echo "  branch-guard     prevents accidental pushes to master/main"
 echo "  glab-guard       blocks glab CLI, directs to curl + \$GITLAB_TOKEN + jq"
+echo "  secret-guard     blocks 'security dump-keychain' (unbounded secret dump)"
 echo "  grounding-guard  auto-blocks the first code edit until /ground passes"
 echo "  context-budget-guard advisory: reminds to start fresh when the session grows large"
 echo "  handoff-reminder after /clear: offers /resume + /handoff or transcript reconstruction"

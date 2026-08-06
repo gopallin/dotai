@@ -60,6 +60,20 @@
       }
     ]
   },
+  "dotai-secret-guard": {
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.gemini/hooks/shared-guard-adapter.sh ~/.gemini/hooks/shared/secret-guard.sh",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  },
   "dotai-context-budget-guard": {
     "PreInvocation": [
       {

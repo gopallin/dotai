@@ -20,5 +20,10 @@ grep -Fqx 'animations = false' "$CONFIG"
 grep -Fqx 'persistence = "save-all"' "$CONFIG"
 jq -e '[.hooks.PreToolUse[] | .hooks[]?.command | select(test("grounding-guard\\.sh$"))] | length == 1' "$HOOKS" >/dev/null
 jq -e '[.hooks.SessionStart[] | .hooks[]?.command | select(test("handoff-reminder\\.sh$"))] | length == 1' "$HOOKS" >/dev/null
+# Registration and the file on disk are separate failure modes: a registered path
+# that was never copied is the "looks installed, does nothing" case this repo keeps
+# hitting. Assert both. `length == 1` also pins idempotency (installer ran twice).
+jq -e '[.hooks.PreToolUse[] | .hooks[]?.command | select(test("secret-guard\\.sh$"))] | length == 1' "$HOOKS" >/dev/null
+[ -x "$TEST_HOME/.codex/hooks/shared/secret-guard.sh" ]
 
 echo 'CODEX_INSTALL_TEST_STATUS=PASS'
