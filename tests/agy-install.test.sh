@@ -49,7 +49,7 @@ fail() { echo "❌ $1" >&2; exit 1; }
 
 # Every dotai guard is registered, under an event agy actually supports.
 for name in dotai-stop-guard dotai-grounding-guard \
-            dotai-branch-guard dotai-glab-guard \
+            dotai-branch-guard dotai-glab-guard dotai-secret-guard \
             dotai-context-budget-guard; do
   jq -e --arg n "$name" 'has($n)' "$HJ" >/dev/null || fail "hooks.json missing $name"
 done

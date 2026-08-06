@@ -133,6 +133,14 @@ cp "$DOTAI_DIR/hooks/shared/glab-guard.sh" "$CLAUDE_DIR/hooks/shared/glab-guard.
 chmod +x "$CLAUDE_DIR/hooks/shared/glab-guard.sh"
 echo "✅ shared/glab-guard.sh       → $CLAUDE_DIR/hooks/shared/glab-guard.sh"
 
+cp "$DOTAI_DIR/hooks/shared/secret-guard.sh" "$CLAUDE_DIR/hooks/shared/secret-guard.sh"
+chmod +x "$CLAUDE_DIR/hooks/shared/secret-guard.sh"
+echo "✅ shared/secret-guard.sh     → $CLAUDE_DIR/hooks/shared/secret-guard.sh"
+
+cp "$DOTAI_DIR/hooks/claude/secret-redact.sh" "$CLAUDE_DIR/hooks/claude/secret-redact.sh"
+chmod +x "$CLAUDE_DIR/hooks/claude/secret-redact.sh"
+echo "✅ claude/secret-redact.sh    → $CLAUDE_DIR/hooks/claude/secret-redact.sh"
+
 # Remove hooks retired by the prompt-layer ablation (docs/ABLATION.md). Unregistering
 # them in settings.json is not enough — the scripts stay on disk, and a leftover file
 # is how a deleted guard quietly comes back (someone re-adds one settings.json line
@@ -203,6 +211,16 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
       ]
     },
     {
+      "matcher": "Bash",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash \($home)/.claude/hooks/shared/secret-guard.sh",
+          "timeout": 5
+        }
+      ]
+    },
+    {
       "matcher": "Edit|Write|MultiEdit",
       "hooks": [
         {
@@ -227,7 +245,25 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
     # `complexity` and `read-dedup` even though neither is installed any more, so
     # that a re-install prunes their stale entries from an older settings.json.
     # Removing a name here orphans its registration forever. See docs/ABLATION.md.
-    (.hooks[0].command | test("shared/(complexity|branch|glab)-guard\\.sh$|claude/(grounding|read-dedup|context-budget)-guard\\.sh$")) | not
+    (.hooks[0].command | test("shared/(complexity|branch|glab|secret)-guard\\.sh$|claude/(grounding|read-dedup|context-budget)-guard\\.sh$")) | not
+  )))) |
+  # Register PostToolUse hook. secret-redact rewrites the tool result via
+  # `updatedToolOutput`, which is the only mechanism that withholds a credential
+  # from the transcript — PostToolUse exit 2 cannot block, the tool already ran.
+  # Bash-only on purpose; see the header of secret-redact.sh.
+  .hooks.PostToolUse = ([
+    {
+      "matcher": "Bash",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash \($home)/.claude/hooks/claude/secret-redact.sh",
+          "timeout": 5
+        }
+      ]
+    }
+  ] + (.hooks.PostToolUse // [] | map(select(
+    (.hooks[0].command | test("claude/secret-redact\\.sh$")) | not
   )))) |
   # Register SessionStart hook (handoff-reminder fires only after /clear)
   .hooks.SessionStart = ([
@@ -308,6 +344,8 @@ echo "  context-budget-guard reminds you to /clear when the session grows large"
 echo "  handoff-reminder after /clear: offers /resume+/handoff or transcript reconstruction"
 echo "  branch-guard     blocks WRITE commands and non-doc edits on master/main (reads pass)"
 echo "  glab-guard       blocks glab CLI, directs to curl + \$GITLAB_TOKEN + jq"
+echo "  secret-guard     blocks 'security dump-keychain' (unbounded secret dump)"
+echo "  secret-redact    scrubs credentials out of Bash output before the model sees them"
 echo "  stack-rules      loads only the detected stack's rules (laravel|vue|node)"
 echo "  statusline       model · context-usage bar · /usage rate-limit bars"
 # Derived from what was actually installed — a hardcoded list silently goes

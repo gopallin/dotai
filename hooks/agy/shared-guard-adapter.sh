@@ -2,7 +2,7 @@
 #
 # shared-guard-adapter.sh (agy CLI — PreToolUse protocol translator)
 #
-# The shared guards (branch-guard, glab-guard) speak the
+# The shared guards (branch-guard, glab-guard, secret-guard) speak the
 # Claude/Codex contract: snake_case {tool_input:{command,file_path}} on stdin,
 # exit 2 + stderr to block. agy speaks camelCase {toolCall:{name,args}} on stdin
 # and reads a JSON decision from stdout, ignoring the exit code entirely.

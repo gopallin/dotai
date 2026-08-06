@@ -123,6 +123,10 @@ cp "$DOTAI_DIR/hooks/shared/glab-guard.sh" "$GEMINI_DIR/hooks/shared/glab-guard.
 chmod +x "$GEMINI_DIR/hooks/shared/glab-guard.sh"
 echo "✅ shared/glab-guard.sh   → $GEMINI_DIR/hooks/shared/glab-guard.sh"
 
+cp "$DOTAI_DIR/hooks/shared/secret-guard.sh" "$GEMINI_DIR/hooks/shared/secret-guard.sh"
+chmod +x "$GEMINI_DIR/hooks/shared/secret-guard.sh"
+echo "✅ shared/secret-guard.sh → $GEMINI_DIR/hooks/shared/secret-guard.sh"
+
 # context-budget-guard (advisory: reminds to start fresh when session grows large)
 cp "$DOTAI_DIR/hooks/agy/context-budget-guard.sh" "$GEMINI_DIR/hooks/context-budget-guard.sh"
 chmod +x "$GEMINI_DIR/hooks/context-budget-guard.sh"
@@ -233,6 +237,7 @@ echo "  grounding-guard  auto-blocks the first code edit until /ground passes"
 echo "  context-budget-guard advisory: reminds to start fresh when the session grows large"
 echo "  branch-guard     blocks WRITE commands on master/main, reads pass (PreToolUse)"
 echo "  glab-guard       blocks glab CLI, directs to curl + \$GITLAB_TOKEN + jq"
+echo "  secret-guard     blocks 'security dump-keychain' (unbounded secret dump)"
 echo "  statusline       model · context-usage bar · /usage rate-limit bars"
 echo "  rules/           AGENTS.md · laravel.md · vue.md · node.md (loaded globally, all projects)"
 # Derived from what was actually installed — a hardcoded list silently goes

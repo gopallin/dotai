@@ -219,6 +219,7 @@ Ran but FAIL? Still cannot stop.
 │   │   ├── grounding-guard.sh  ← Claude PreToolUse hook (blocks first un-grounded edit)
 │   │   ├── context-budget-guard.sh ← Claude PreToolUse hook (advisory: reminds to /clear when session grows large)
 │   │   ├── handoff-reminder.sh ← Claude SessionStart hook (after /clear: offer /resume+/handoff or transcript rebuild)
+│   │   ├── secret-redact.sh    ← Claude PostToolUse hook (rewrites Bash output to scrub credentials before the model/transcript sees them)
 │   │   └── stack-rules.sh      ← Claude SessionStart hook (emits ONLY the detected stack's rules file)
 │   ├── codex/
 │   │   ├── stop-guard.sh       ← Codex CLI Stop event hook
@@ -233,7 +234,8 @@ Ran but FAIL? Still cannot stop.
 │   │   └── shared-guard-adapter.sh ← translates agy's JSON contract ↔ the shared guards' exit codes
 │   └── shared/
 │       ├── branch-guard.sh     ← blocks WRITE commands + non-doc edits on master/main (reads pass)
-│       └── glab-guard.sh       ← blocks the `glab` CLI, redirects to curl + $GITLAB_TOKEN
+│       ├── glab-guard.sh       ← blocks the `glab` CLI, redirects to curl + $GITLAB_TOKEN
+│       └── secret-guard.sh     ← blocks `security dump-keychain` (the one dump redaction cannot cover)
 ├── rules/                      ← installed to ~/.claude/dotai-rules/, NOT ~/.claude/rules/
 │   ├── laravel.md              ← Laravel-specific guidelines   ┐ exactly ONE of these
 │   ├── vue.md                  ← Vue.js-specific guidelines    ├ loads per session,
@@ -250,6 +252,50 @@ natively (and its "Edit the file first" escape hatch was wrong in exactly the ca
 that needs a re-read), the second was **provably inert** — it read
 `CLAUDE_TOOL_NAME`, which Claude Code never sets, so its `case` never matched.
 `tests/agy-hook-contract.test.sh` now asserts all three files stay absent.
+
+**Credential handling — why two hooks, not a rule.** On 2026-08-06 a
+`security dump-keychain` inside a live session wrote a working GitHub PAT into the
+transcript in plaintext. The token had been stored, by mistake, as a keychain
+item's *service name* — an attribute, which `dump-keychain` prints, rather than
+the protected password blob. Transcripts are plaintext JSONL under
+`~/.claude/projects/` **and are sent to the model provider**, so the only remedy
+was revoking the token; deleting the local copy achieved nothing.
+
+The lesson is that a credential reaching the transcript has already left the
+machine, which makes "remember not to print secrets" the wrong shape of fix —
+it has to be intercepted, not requested. Hence:
+
+- `shared/secret-guard.sh` (PreToolUse) blocks **only** `security dump-keychain`.
+  Narrow on purpose: that is the single command whose output contains an
+  unbounded set of secrets in *unknown* formats, so redaction has nothing to
+  match on. Targeted `find-generic-password` stays allowed — `/ship` reads the
+  GitHub token that way.
+- `claude/secret-redact.sh` (PostToolUse) replaces the tool result via
+  `updatedToolOutput`, scrubbing known shapes (`github_pat_`, `ghp_`, `glpat-`,
+  `sk-ant-`, `AKIA`, `xox*`, PEM headers). Rewriting the output is the *only*
+  mechanism that withholds a value at this event — **PostToolUse `exit 2` cannot
+  block, the tool has already run**. It is registered for `Bash` alone; redacting
+  a `Read` would show the model `[REDACTED:…]` as a file's real content, which it
+  could then write back on the next `Edit`.
+
+`secret-guard` is shared, so it installs and registers on **all three** CLIs (agy
+via `shared-guard-adapter.sh` — its `exit 2` is invisible to agy otherwise).
+`secret-redact` is **Claude Code only**: `updatedToolOutput` has no Codex or agy
+equivalent, and a port would be an inert file of the kind §agy Hook Contract
+already warns about.
+
+**Status: `[unverified]`.** Both are registered and exercised directly against
+real payloads (`tests/secret-guard.test.sh`, 26 assertions; synthetic credentials
+only — never put a live one in a fixture, the repo is pushed and git history is
+permanent). Neither has been **observed firing in a live session**. To confirm,
+after `bash install.sh` and a restart:
+
+```bash
+# expect the guard's block message, not keychain contents:
+security dump-keychain | head -3
+# expect [REDACTED:gitlab-pat] instead of the value:
+echo "glpat-AAAAAAAAAAAAAAAAAAAA"
+```
 
 **Where reviewer rules live.** The L1/L2/L3 checklist was inlined in both
 `ground` and `ship` and had already drifted between them, while naming one

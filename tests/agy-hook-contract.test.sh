@@ -165,6 +165,19 @@ expect_decision "adapter: glab-guard denies glab" \
   "$(pretool_payload run_command '{"CommandLine":"glab mr list"}' "$TRANSCRIPT_CLEAN")" \
   deny "$REPO" hooks/shared/glab-guard.sh
 
+# secret-guard reaches agy only through the adapter — it signals with exit 2 and
+# stderr, which agy ignores entirely. Without this the guard would install, appear
+# registered, and never block anything.
+expect_decision "adapter: secret-guard denies keychain dump" \
+  hooks/agy/shared-guard-adapter.sh \
+  "$(pretool_payload run_command '{"CommandLine":"security dump-keychain"}' "$TRANSCRIPT_CLEAN")" \
+  deny "$REPO" hooks/shared/secret-guard.sh
+
+expect_decision "adapter: secret-guard allows targeted lookup" \
+  hooks/agy/shared-guard-adapter.sh \
+  "$(pretool_payload run_command '{"CommandLine":"security find-generic-password -s ai-agent-github-token -w"}' "$TRANSCRIPT_CLEAN")" \
+  allow "$REPO" hooks/shared/secret-guard.sh
+
 # branch-guard USED to fail open on any payload without a shell command, which
 # silently included every file edit — so it was scoped to run_command only and this
 # test pinned the fail-open as expected behaviour. That was the bug, not the design:
