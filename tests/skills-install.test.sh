@@ -37,7 +37,14 @@ done
 
 # agy has no "commands" customization type — dotai's slash commands ship there as
 # skills, so its skills root legitimately holds more entries than the other CLIs.
-AGY_COMMANDS=(precommit plan next-ticket handoff prompt)
+# Derived from commands/*.md for the same reason SKILLS is derived from skills/:
+# a hardcoded list turns "added a command" into a test failure in an unrelated file.
+AGY_COMMANDS=()
+for f in "$ROOT/commands"/*.md; do
+  [ -f "$f" ] || continue   # no nullglob: an unmatched glob arrives as a literal
+  AGY_COMMANDS+=("$(basename "$f" .md)")
+done
+[ "${#AGY_COMMANDS[@]}" -gt 0 ] || { echo "❌ no commands found in $ROOT/commands" >&2; exit 1; }
 
 assert_skills_root() {
   local label=$1 root=$2; shift 2

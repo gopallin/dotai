@@ -41,13 +41,13 @@ fi
 # agy has no "commands" customization type; its slash commands are resolved from
 # skills (verified: a skill named dotai-probe was invocable as /dotai-probe).
 # dotai used to drop these in ~/.gemini/commands/, which agy never reads, so
-# /precommit, /plan, /handoff, /prompt and /next-ticket did not exist there.
+# /precommit, /plan, /map, /handoff, /prompt and /next-ticket did not exist there.
 
 AGY_SKILLS="$GEMINI_DIR/config/skills"
 mkdir -p "$AGY_SKILLS"
 rm -rf "$GEMINI_DIR/commands"   # legacy location agy never read
 
-for cmd in precommit plan next-ticket handoff prompt; do
+for cmd in precommit plan map next-ticket handoff prompt; do
   dest="$AGY_SKILLS/$cmd"
   rm -rf "$dest"
   mkdir -p "$dest"
@@ -227,7 +227,8 @@ echo ""
 echo "dotai → Antigravity CLI (agy) installed."
 echo ""
 echo "Available:"
-echo "  /plan            structured design planning"
+echo "  /plan            single-session design planning"
+echo "  /map             chart a multi-session effort as decision tickets"
 echo "  /next-ticket     pick up the next unblocked ticket"
 echo "  /handoff         save a compact resume file before starting fresh"
 echo "  /precommit       run lint + build + test"
