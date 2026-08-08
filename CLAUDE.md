@@ -200,7 +200,8 @@ Ran but FAIL? Still cannot stop.
 ├── commands/
 │   ├── precommit.md            ← /precommit slash command (documents output format + stop-guard contract)
 │   ├── precommit.sh            ← /precommit execution script (tech-stack detection → lint/build/test; outputs PRECOMMIT_STATUS=)
-│   ├── plan.md                 ← /plan design planning command (+ ticket decomposition, CONTEXT.md glossary)
+│   ├── plan.md                 ← /plan single-session planning (+ ticket decomposition, --from-map collapse, CONTEXT.md glossary)
+│   ├── map.md                  ← /map multi-session decision map: destination, fog of war, decision tickets → hands off to /plan --from-map
 │   ├── next-ticket.md          ← /next-ticket pick up next unblocked ticket (one slice per session)
 │   ├── handoff.md              ← /handoff compact resume file before /clear (local-only, git-ignored)
 │   ├── prompt.md               ← /prompt guided wizard: collects type/goal/files/scope/done-when, builds AI-ready task prompt via prompt-template.sh

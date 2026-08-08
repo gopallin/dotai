@@ -70,7 +70,7 @@ echo "✅ TUI status line    → $CONFIG_FILE"
 # ── 3. Commands (Codex custom prompts: ~/.codex/prompts/*.md → /name) ─────────
 
 mkdir -p "$CODEX_DIR/prompts"
-for cmd in precommit plan next-ticket handoff prompt; do
+for cmd in precommit plan map next-ticket handoff prompt; do
   cp "$DOTAI_DIR/commands/$cmd.md" "$CODEX_DIR/prompts/$cmd.md"
 done
 
@@ -84,7 +84,7 @@ chmod +x "$CODEX_DIR/prompts/precommit.sh"
 cp "$DOTAI_DIR/commands/prompt-template.sh" "$CODEX_DIR/prompts/prompt-template.sh"
 chmod +x "$CODEX_DIR/prompts/prompt-template.sh"
 
-for cmd in precommit plan next-ticket handoff prompt; do
+for cmd in precommit plan map next-ticket handoff prompt; do
   echo "✅ /$cmd prompt → $CODEX_DIR/prompts/$cmd.md"
 done
 echo "✅ /precommit script  → $CODEX_DIR/prompts/precommit.sh"
@@ -250,7 +250,8 @@ echo ""
 echo "dotai → Codex CLI installed."
 echo ""
 echo "Available after restart:"
-echo "  /plan            structured design planning (save to plan.md, optionally decompose into tickets)"
+echo "  /plan            single-session design planning (save to plan.md, optionally decompose into tickets)"
+echo "  /map             chart a multi-session effort as decision tickets, one per session"
 echo "  /next-ticket     pick up the next unblocked ticket (one context-sized slice per session)"
 echo "  /handoff         save a compact resume file before starting fresh (local-only, never committed)"
 echo "  /precommit       run lint + build + test"
