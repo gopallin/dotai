@@ -98,6 +98,21 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD)
 git push origin "$BRANCH" 2>&1
 ```
 
+### Step 4.5: Optional Release Branch
+
+Ask the user if they also want to push a release branch for this feature.
+- Suggest a default release branch name by replacing `feature/` with `release/` from the current branch name (e.g., `feature/labelkit-integration` -> `release/labelkit-integration`).
+- The user can confirm the default, provide a custom release branch name, or decline/skip.
+- If the user confirms or provides a name, create the branch locally, push it, and return to the feature branch:
+
+```bash
+# Assuming the user confirmed and provided RELEASE_BRANCH
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+git checkout -b "$RELEASE_BRANCH"
+git push origin "$RELEASE_BRANCH" 2>&1
+git checkout "$CURRENT_BRANCH"
+```
+
 ---
 
 ### Step 5: Open the Merge Request / Pull Request
@@ -285,6 +300,7 @@ Report final execution status to the user:
 - ✅ Tests Passed
 - ✅ L1/L2/L3 Review Passed (LGTM)
 - ✅ Branch Pushed (`origin/<branch>`)
+- ✅ Release Branch Pushed (`origin/<release-branch>`) (if applicable)
 - ✅ MR/PR Created (provide direct `web_url` link)
 
 If Step 5 could not complete (token missing, token lacks a permission, unknown
