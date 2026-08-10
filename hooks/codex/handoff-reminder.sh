@@ -48,14 +48,24 @@ EOF
   exit 0
 fi
 
+cat >&2 <<EOF
+
+[dotai handoff-reminder] 上一個 session 未留下最新的 handoff 檔案。
+請選擇接下來的動作 (在輸入框直接告訴 AI 即可)：
+  A. 高保真 — /resume 回 $PREV_ID，在那邊跑 /handoff，再 /clear
+  B. 便宜 — 從 transcript 的尾段重建 handoff (會標記未驗證，可能漏掉中途的決策)
+  C. 跳過 — 不要 handoff，直接處理這題
+
+EOF
+
 cat <<EOF
 [dotai handoff-reminder] This session started from /clear and the previous session left no fresh handoff.
 Previous session: $PREV_ID (~$LINES transcript lines)
 Transcript on disk: $PREV
 
-On the user's first message, briefly offer these options in the user's language before starting their task:
-  A. High fidelity — /resume back into session $PREV_ID, run /handoff there, then /clear again.
-  B. Cheap — reconstruct a handoff from the TAIL of the transcript above; mark it unverified.
-  C. Skip — continue without a handoff.
+The user has been prompted directly in the terminal to choose A, B, or C.
+If they choose A, they will run the resume command themselves.
+If they choose B, reconstruct a handoff from the TAIL of the transcript above (per /handoff Reconstruction Mode: mark unverified, may miss mid-session decisions).
+If they choose C, continue without a handoff.
 Do not reconstruct or resume anything until the user chooses.
 EOF

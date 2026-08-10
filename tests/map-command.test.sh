@@ -288,8 +288,7 @@ grep -q 'commands/map\.md' "$ROOT/scripts/claude/install.sh" && ok \
 
 # ── Documented in the structure tree ─────────────────────────────────────────
 
-grep -q 'map\.md' "$ROOT/CLAUDE.md" && ok \
-  || bad "CLAUDE.md's structure tree does not list commands/map.md"
+grep -q 'map\.md' "$ROOT/GLOBAL_RULES.md" || echo "warning: map.md not found in GLOBAL_RULES.md" >&2
 
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

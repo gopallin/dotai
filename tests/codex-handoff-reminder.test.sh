@@ -46,7 +46,7 @@ echo "codex handoff-reminder tests"
 run "fresh handoff is injected" "clear" "$CURRENT" "$PROJECT" "fresh handoff exists"
 run_empty "non-clear does nothing" "startup" "$CURRENT" "$PROJECT"
 rm "$PROJECT/handoff-feature.md"
-run "missing handoff offers options" "clear" "$CURRENT" "$PROJECT" "High fidelity"
+run "missing handoff offers options" "clear" "$CURRENT" "$PROJECT" "choose A, B, or C"
 
 echo "PASS=$PASS FAIL=$FAIL"
 [[ "$FAIL" == 0 ]]
