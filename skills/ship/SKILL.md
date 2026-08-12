@@ -269,7 +269,7 @@ curl -s --request POST \
   --header "Content-Type: application/json" \
   --data "$(jq -n \
       --arg s "$BRANCH" --arg t "$TARGET_BRANCH" \
-      --arg title "draft: $(git log -1 --format=%s)" \
+      --arg title "$(git log -1 --format=%s)" \
       --arg body "## Summary
 
 $(git log -1 --format=%b)
@@ -284,6 +284,13 @@ $(git log -1 --format=%b)
 > Build the JSON with `jq -n`, never string interpolation — a commit body
 > containing a quote, backslash, or newline otherwise produces invalid JSON and the
 > API returns a 400 that reads like an auth failure.
+
+> **No `draft:` title prefix.** GitLab parses it and returns `draft: true`, which
+> blocks the merge button until someone manually clicks "Mark as ready" — a hidden
+> extra step on every single MR. It was also an asymmetry: 5a never prefixed the
+> GitHub title, so the same `/ship` produced a ready PR and a blocked MR depending
+> only on the forge. If a particular MR genuinely is work-in-progress, say so and
+> add the prefix for that one.
 
 #### 5c. `route=unknown` → stop and ask
 

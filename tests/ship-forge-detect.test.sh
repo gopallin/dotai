@@ -140,5 +140,16 @@ else
   PASS=$((PASS+1))
 fi
 
+# The MR title must not carry a "draft:" prefix. GitLab parses it and returns
+# draft:true, so the MR opens with its merge button blocked until a human clicks
+# "Mark as ready" — while 5a never prefixed the GitHub title, making the same
+# /ship produce a ready PR and a blocked MR depending only on the forge.
+# [probed: an MR opened by /ship with the prefix came back {"draft": true}.]
+if printf '%s' "$GL_SECTION" | grep -q -- '--arg title "draft:'; then
+  FAIL=$((FAIL+1)); echo "❌ GitLab MR title carries a draft: prefix — the MR opens blocked" >&2
+else
+  PASS=$((PASS+1))
+fi
+
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]
