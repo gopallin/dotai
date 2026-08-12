@@ -31,28 +31,56 @@ skill emits `GROUNDING_STATUS=PASS` (or an explicit `SKIP`).
 Work through every step. Do **not** skip a step because the task "looks simple" —
 the skip path is the explicit `SKIP` marker below, not silence.
 
-### Step 0 — Verify git readiness
+### Step 0 — Verify git readiness & ensure correct branch
 
 Cheapest check first: it costs one command and prevents work that has to be
 redone or unpicked.
 
 ```bash
-git rev-parse --abbrev-ref HEAD   # must NOT be main/master
-git status --short                # working tree should be clean
+git rev-parse --abbrev-ref HEAD   # identify current branch
+git status --short                # working tree state
 ```
 
-- **On `main`/`master`** → stop and create a feature branch first. (`branch-guard`
-  will block the edit anyway, but finding out here is cheaper than after the
-  grounding work.)
-- **Dirty working tree** → surface it. Unrelated uncommitted changes get swept
-  into the next commit and make the diff unreviewable. Ask before continuing.
+#### Case A — On `main`/`master`
+
+1. `git pull origin main` (or `master`) — **always pull latest before branching**.
+2. Suggest a branch name and base point based on the task:
+   - **Default**: branch from `main`/`master` (most common).
+   - If the task is continuing work on an existing feature branch → suggest that
+     branch instead.
+   - If the task is a hotfix → may suggest branching from a release tag or branch.
+3. **Ask the user to confirm**: "建議從 main 開分支 `feature/xxx`，確認嗎？還是要
+   從其他 branch 開？" — the AI suggests, the user decides.
+4. `git checkout -b <branch>` from the confirmed base.
+
+#### Case B — Already on a feature branch
+
+Do **not** assume the current branch is correct — verify it matches the task.
+
+1. Compare the branch name against the task description and make a judgment:
+   does this branch look like it belongs to the current task?
+2. **Ask the user to confirm**: "目前在 `feature/xxx`，這是你要開發的 branch 嗎？"
+3. If **yes** → check working tree:
+   - Clean → ✅ proceed.
+   - Dirty → ⚠️ surface uncommitted changes, ask whether to continue.
+4. If **no** →
+   - Dirty working tree → tell the user to handle uncommitted changes first
+     (stash / commit / discard). Do not switch branches with a dirty tree.
+   - Clean → `git checkout main` (or `master`) → follow **Case A** above
+     (pull latest, suggest branch, ask user, create branch).
+
+#### Case C — On another branch (release, staging, etc.)
+
+Same as Case B: confirm whether it is the intended branch. If not, switch to
+`main`/`master` and follow Case A.
+
+#### General rules
+
+- **Dirty working tree** → always surface it. Unrelated uncommitted changes get
+  swept into the next commit and make the diff unreviewable. Ask before continuing.
 - **Reviewing or continuing someone's branch** → `git fetch origin` and check out
   the latest first, so you ground against the real current state instead of a
   stale local copy.
-
-This mirrors the global Pre-Implementation Grounding Protocol step 3. It was
-enforced only inside `grounding-guard.sh` (which silently skips on main), so the
-check existed in the hook but was never a step the agent actually performed.
 
 ### Step 1 — Restate the task (guards `misunderstood_request`)
 
