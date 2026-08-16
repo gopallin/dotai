@@ -3,15 +3,55 @@
 # precommit.sh — quality verification pipeline
 # Called by the /precommit slash command (commands/precommit.md).
 #
-# Output contract (stop-guard.sh reads this from the session transcript):
+# Human-readable output:
 #   ✅ step_name (Xs)          — step passed
 #   ❌ step_name (Xs) - reason — step failed; script exits immediately
 #   ## Overall: ✅ PASS        — all steps passed
-#   PRECOMMIT_STATUS=PASS      — machine-readable marker for stop-guard Layer 2b
-#   ## Overall: ❌ FAIL
-#   PRECOMMIT_STATUS=FAIL
+#   PRECOMMIT_STATUS=PASS / PRECOMMIT_STATUS=FAIL
+#
+# ── Machine contract with stop-guard.sh: the receipt file, NOT the transcript ──
+#
+# stop-guard used to grep the session transcript for the literal strings
+# `/precommit` and `PRECOMMIT_STATUS=PASS`. That made the gate self-satisfying:
+# Claude Code injects a blocked hook's own stderr back into the transcript as a
+# user message, and stop-guard's messages contain BOTH literals ("Run /precommit
+# …", "…ensure it outputs PRECOMMIT_STATUS=PASS"). So the first block made
+# Layer 2a pass forever, the second made Layer 2b pass forever — the gate could
+# block at most twice per session and then stood permanently open. Prose that
+# merely *mentioned* /precommit satisfied it too, as did an agent typing the
+# PASS line by hand without running anything.
+#
+# The fix: this script writes a receipt only it can write, and stop-guard reads
+# that. The receipt is keyed to a fingerprint of the working tree, so a PASS
+# earned before further edits does not authorise stopping after them.
 
 set -uo pipefail
+
+# ── Receipt ───────────────────────────────────────────────────────────────────
+
+# Fingerprint of everything a commit would capture: HEAD plus the porcelain
+# status. Any subsequent edit, stage, or new untracked file changes it.
+#
+# ⚠️ stop-guard.sh recomputes this with an identical line. The two are locked
+# together by tests/stop-guard.test.sh, which runs this script and then the
+# guard against the same tree — if the algorithms ever drift, that test fails.
+precommit_tree_fingerprint() {
+  { git rev-parse HEAD 2>/dev/null; git status --porcelain 2>/dev/null; } \
+    | shasum -a 256 | cut -d' ' -f1
+}
+
+# Written to the git dir (not the worktree): never committed, per-clone, and
+# `git rev-parse --git-dir` resolves correctly inside linked worktrees, which a
+# hardcoded "$REPO_ROOT/.git" does not.
+write_receipt() {
+  local status="$1" gitdir
+  gitdir=$(git rev-parse --git-dir 2>/dev/null) || return 0  # not a repo — nothing to gate
+  {
+    echo "status=${status}"
+    echo "tree=$(precommit_tree_fingerprint)"
+    echo "ts=$(date +%s)"
+  } > "${gitdir}/dotai-precommit"
+}
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -31,6 +71,7 @@ run_step() {
     echo ""
     echo "## Overall: ❌ FAIL"
     echo "PRECOMMIT_STATUS=FAIL"
+    write_receipt FAIL
     exit 1
   fi
 }
@@ -93,6 +134,7 @@ else
   echo "❌ Could not detect tech stack (no artisan, package.json, vite.config.*, or tests/*.test.sh)"
   echo "## Overall: ❌ FAIL"
   echo "PRECOMMIT_STATUS=FAIL"
+  write_receipt FAIL
   exit 1
 fi
 
@@ -148,3 +190,4 @@ fi
 echo ""
 echo "## Overall: ✅ PASS"
 echo "PRECOMMIT_STATUS=PASS"
+write_receipt PASS
