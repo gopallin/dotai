@@ -96,6 +96,20 @@ expect_decision "stop-guard: error termination → allow (never fight an error)"
 expect_decision "stop-guard: loop brake at executionNum 3 → allow" \
   hooks/agy/stop-guard.sh "$(stop_payload "$TRANSCRIPT_EDITED" model_stop 3)" allow
 
+# ── stop-guard false positive mitigation tests ────────────────────────────────
+
+# 情境 1: Prose mentioning write_to_file but no actual toolCall object
+TRANSCRIPT_PROSE="$TMP/prose.jsonl"
+printf '{"text":"Please explain how to use write_to_file to modify code"}\n' > "$TRANSCRIPT_PROSE"
+expect_decision "stop-guard: prose mentioning write_to_file → allow" \
+  hooks/agy/stop-guard.sh "$(stop_payload "$TRANSCRIPT_PROSE")" allow
+
+# 情境 2: Actual toolCall modifying a file, but the file is not dirty in Git (empty intersection)
+TRANSCRIPT_EDITED_CLEAN_FILE="$TMP/edited-clean-file.jsonl"
+printf '{"toolCall":{"name":"write_to_file","args":{"TargetFile":"/nonexistent/clean.php"}}}\n' > "$TRANSCRIPT_EDITED_CLEAN_FILE"
+expect_decision "stop-guard: edits on clean file not in git status → allow" \
+  hooks/agy/stop-guard.sh "$(stop_payload "$TRANSCRIPT_EDITED_CLEAN_FILE")" allow "$REPO"
+
 # ── grounding-guard (PreToolUse) ──────────────────────────────────────────────
 
 expect_decision "grounding-guard: first code edit, no grounding → deny" \
