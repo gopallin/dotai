@@ -202,16 +202,26 @@ if [ "$BG_MATCHERS" = "run_command write_to_file|replace_file_content|edit_noteb
   bad "hooks.json: dotai-branch-guard should match run_command + the edit tools, got: $BG_MATCHERS"
 fi
 
+# TargetFile must be a path INSIDE $MAINREPO. branch-guard now only blocks files
+# within the working tree — a file elsewhere cannot dirty the branch — so the old
+# fictional `/x/a.php` is (correctly) allowed and would stop testing the deny path.
+# Built with jq rather than a hand-escaped literal: pretool_payload feeds this to
+# `--argjson`, so one mis-escaped quote silently becomes an unparsable payload and
+# the guard fails OPEN, which reads exactly like the assertion under test failing.
+BG_ARGS_PHP=$(jq -cn --arg p "$MAINREPO/a.php" '{TargetFile:$p,CodeContent:"x",Overwrite:false}')
 OUT3=$(cd "$MAINREPO" && printf '%s' \
-  "$(pretool_payload write_to_file '{"TargetFile":"/x/a.php","CodeContent":"x","Overwrite":false}' "$TRANSCRIPT_CLEAN")" \
+  "$(pretool_payload write_to_file "$BG_ARGS_PHP" "$TRANSCRIPT_CLEAN")" \
   | bash "$ROOT/hooks/agy/shared-guard-adapter.sh" "$ROOT/hooks/shared/branch-guard.sh" 2>/dev/null)
 if printf '%s' "$OUT3" | jq -e '.decision == "deny"' >/dev/null 2>&1; then ok; else
   bad "adapter: non-doc edit on main must deny, got: $OUT3"
 fi
 
 # ...but a documentation edit on main still passes, same as the Claude path.
+# Also in-repo on purpose: an out-of-tree path would now be allowed by the
+# containment rule as well, so this would no longer isolate the `.md` exemption.
+BG_ARGS_MD=$(jq -cn --arg p "$MAINREPO/README.md" '{TargetFile:$p,CodeContent:"x",Overwrite:false}')
 OUT3B=$(cd "$MAINREPO" && printf '%s' \
-  "$(pretool_payload write_to_file '{"TargetFile":"/x/README.md","CodeContent":"x","Overwrite":false}' "$TRANSCRIPT_CLEAN")" \
+  "$(pretool_payload write_to_file "$BG_ARGS_MD" "$TRANSCRIPT_CLEAN")" \
   | bash "$ROOT/hooks/agy/shared-guard-adapter.sh" "$ROOT/hooks/shared/branch-guard.sh" 2>/dev/null)
 if printf '%s' "$OUT3B" | jq -e '.decision == "allow"' >/dev/null 2>&1; then ok; else
   bad "adapter: .md edit on main should allow, got: $OUT3B"

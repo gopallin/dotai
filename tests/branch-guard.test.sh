@@ -43,9 +43,16 @@ check() {
   echo "❌ expected $want, got exit $status for [$repo]: $cmd" >&2
 }
 
+# %R% expands to the repo's working-tree root. It MUST be a real path now that the
+# guard only blocks files inside the tree — the old fictional `/repo/...` paths
+# would all be allowed (correctly) and would silently stop testing anything.
+# Note $TMP comes from mktemp -d, i.e. the SYMLINKED form on macOS
+# (/var/folders/... → /private/var/folders/...), so every %R% case also exercises
+# the guard's physical-path resolution.
 check_edit() {
   local want=$1 path=$2 repo=${3:-protected}
   local status
+  path=${path//%R%/$TMP/$repo}
   ( cd "$TMP/$repo" && printf '%s' "$(jq -cn --arg p "$path" '{tool_input:{file_path:$p}}')" \
     | bash "$GUARD" >/dev/null 2>&1 )
   status=$?
@@ -96,6 +103,26 @@ check allow 'ls -la'
 check allow 'bash -n script.sh 2>&1'
 check allow 'command -v jq 2>/dev/null'
 
+# ── A `>` inside a string literal is data, not a redirect ────────────────────
+# Regression, observed 2026-08-19: this exact read-only command was blocked with
+# "redirects output to a file" because `-` is neither a digit nor `&`, so `->`
+# satisfied the bare-string redirect pattern.
+check allow 'echo "s3.ap-northeast-1.amazonaws.com -> "'
+check allow 'echo "[10.0.50.176] -> internal"'
+check allow "grep -oE '>' hooks/shared/branch-guard.sh"
+check allow 'echo "use > to redirect and >> to append"'
+check allow "awk '{print \$1 \" -> \" \$2}' routes.txt"
+# ...but an UNQUOTED `->` genuinely redirects into a file named `b`, so this one
+# must still block. This is why the fix is quote awareness, not skipping `->`.
+check block 'echo a->b'
+check block 'echo "hi" > notes.txt'
+check block "echo 'hi' >> notes.txt"
+
+# A write COMMAND inside quotes is normally a real invocation, so unlike the
+# redirect check this one deliberately still scans the raw string.
+check block "bash -c 'git commit -m x'"
+check block "ssh host 'git push origin master'"
+
 # ── The escape hatch must survive unconditionally ────────────────────────────
 check allow 'git checkout -b feature/new'
 check allow 'git switch -c feature/new'
@@ -103,32 +130,48 @@ check allow 'git -C /some/dir checkout main'
 check allow 'git checkout -b feature/x 2>&1'
 
 # ── Edit/Write pass-through ──────────────────────────────────────────────────
-check_edit allow '/repo/README.md'
-check_edit allow '/repo/.claudedocs/note.txt'
-check_edit block '/repo/app/Services/Foo.php'
+check_edit allow '%R%/README.md'
+check_edit allow '%R%/.claudedocs/note.txt'
+check_edit block '%R%/app/Services/Foo.php'
+# Neither app/ nor Services/ exists — resolution must walk up to the deepest
+# existing ancestor (the repo root) instead of giving up and failing open.
+check_edit block '%R%/does/not/exist/yet/Foo.php'
+# Relative path, resolved against cwd (= the repo root in this harness).
+check_edit block 'app/Services/Foo.php'
 
 # git internals: git cannot track anything inside .git, so a write there can never
 # dirty the branch or enter history. Blocking it only broke /handoff, which writes
 # its ignore patterns to .git/info/exclude.
-check_edit allow '/repo/.git/info/exclude'
-check_edit allow '/repo/.git/config'
-check_edit allow '/repo/vendor/pkg/.git/info/exclude'
+check_edit allow '%R%/.git/info/exclude'
+check_edit allow '%R%/.git/config'
+check_edit allow '%R%/vendor/pkg/.git/info/exclude'
 # Relative path: Claude Code sends absolute, but the contract does not promise it
 # for every CLI, and a `*/.git/*`-only pattern would block this.
 check_edit allow '.git/info/exclude'
 # Submodules and worktrees make `.git` a FILE holding a `gitdir:` pointer.
-check_edit allow '/repo/sub/.git'
+check_edit allow '%R%/sub/.git'
 
 # ...but `.github/` is NOT `.git/` — workflow files are tracked repo content and
 # must stay blocked. A sloppy glob would let these through.
-check_edit block '/repo/.github/workflows/ci.yml'
-check_edit block '/repo/.gitignore'
-check_edit block '/repo/src/.gitkeep'
+check_edit block '%R%/.github/workflows/ci.yml'
+check_edit block '%R%/.gitignore'
+check_edit block '%R%/src/.gitkeep'
+
+# ── Files OUTSIDE the working tree cannot affect the branch ──────────────────
+# Regression, observed 2026-08-19: a write to the session scratchpad under
+# /private/tmp/... was blocked purely because cwd was a repo sitting on main.
+# The branch has no relationship to those files, so blocking protected nothing.
+check_edit allow '/private/tmp/claude-501/session/scratchpad/report.html'
+check_edit allow '/tmp/scratch/notes.json'
+check_edit allow "$TMP/outside-any-repo/thing.php"
+check_edit allow '/Users/nobody/elsewhere/app.ts'
+# A sibling temp repo is still "outside" relative to the one we are standing in.
+check_edit allow "$TMP/feature/app/Services/Foo.php"
 
 # ── Off master, the guard is inert ───────────────────────────────────────────
 check allow 'git commit -m "wip"' feature
 check allow 'rm -rf build/' feature
-check_edit allow '/repo/app/Services/Foo.php' feature
+check_edit allow '%R%/app/Services/Foo.php' feature
 
 # ── Unparsable payload must fail OPEN, never trap the agent on master ────────
 ( cd "$TMP/protected" && printf '%s' '{}' | bash "$GUARD" >/dev/null 2>&1 )

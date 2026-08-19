@@ -98,8 +98,32 @@ if [ "$CURRENT_BRANCH" = "master" ] || [ "$CURRENT_BRANCH" = "main" ]; then
         # Redirection to a FILE is a write masquerading as anything else.
         # The regex matches a `>`/`>>` whose preceding char is neither a digit nor
         # `&`, so stderr operations (`2>&1`, `2>/dev/null`, `>&2`) still pass.
-        if echo "$EXECUTING_CMD" | grep -qE '(^|[^0-9&])>>?($|[^&])'; then
+        #
+        # It runs against a QUOTE-STRIPPED copy, because a `>` inside a string
+        # literal is data, not an operator. Observed false positive 2026-08-19: the
+        # read-only  echo "s3.ap-northeast-1.amazonaws.com -> "  was blocked, since
+        # `-` is neither a digit nor `&` and so `->` matched. Note the fix has to be
+        # quote awareness rather than special-casing `->`: unquoted, `echo a->b`
+        # really does redirect into a file named `b`.
+        #
+        # SCRUBBED is deliberately byte-identical to the line in glab-guard.sh and
+        # secret-guard.sh — same name, same sed — because this is the third copy of
+        # one idea and reviewer-rules L1 ("one concern, one source") flags exactly
+        # that. Keeping the copies identical is the cheap half of the fix; hoisting
+        # them into a sourced helper is a separate change, since a new installed file
+        # carries the parity obligation across all three CLI installers plus a test.
+        #
+        # KNOWN LIMIT — two sed substitutions are not a shell parser. An escaped
+        # quote inside a quoted span (`"a\" > f"`) mis-pairs and leaves the `>`
+        # exposed, so that case still blocks. That is the safe direction to fail.
+        SCRUBBED=$(printf '%s' "$EXECUTING_CMD" | sed -E "s/'[^']*'//g; s/\"[^\"]*\"//g")
+        if echo "$SCRUBBED" | grep -qE '(^|[^0-9&])>>?($|[^&])'; then
             BLOCK_REASON="redirects output to a file"
+        # DELIBERATELY the RAW command, not $SCRUBBED. The asymmetry with the
+        # redirect check above is intentional: a write *command* inside quotes is
+        # normally a real invocation (`bash -c 'git push'`, `ssh host 'git commit'`),
+        # so stripping quotes here would silently drop detection that works today.
+        # The cost is that `echo "run git commit"` still blocks — rarer, and safe.
         elif echo "$EXECUTING_CMD" | grep -qiE "$WRITE_CMDS"; then
             BLOCK_REASON="runs a write/history-modifying command"
         else
@@ -143,6 +167,41 @@ if [ "$CURRENT_BRANCH" = "master" ] || [ "$CURRENT_BRANCH" = "main" ]; then
             *.md|*/.claudedocs/*) exit 0 ;;
             */.git/*|*/.git|.git/*|.git) exit 0 ;;
         esac
+
+        # A path OUTSIDE this repo's working tree cannot dirty the branch, cannot be
+        # committed, and cannot enter history — exactly the argument already accepted
+        # for `.git/` above. Observed false positive 2026-08-19: a write to the
+        # session scratchpad under /private/tmp/... was blocked merely because cwd
+        # happened to be a repo sitting on main. Blocking that protects nothing; the
+        # branch has no relationship to the file.
+        #
+        # Both sides are resolved to PHYSICAL paths before comparing. On macOS the
+        # same directory is reachable through symlinks (/tmp → /private/tmp,
+        # /var → /private/var, and mktemp -d hands back the symlinked form), so a
+        # textual prefix test would miss real in-repo paths and fail OPEN — the
+        # dangerous direction. The target usually does not exist yet (Write creates
+        # it), so resolution walks up to the deepest existing ancestor directory and
+        # re-appends the remainder.
+        #
+        # If the working tree cannot be located (bare repo, or cwd inside .git), fall
+        # through to the block below. Refusing to guess is safer than allowing.
+        REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+        if [ -n "$REPO_ROOT" ] && REPO_ROOT_P=$(cd "$REPO_ROOT" 2>/dev/null && pwd -P); then
+            FILE_ABS="$FILE_PATH"
+            case "$FILE_ABS" in /*) ;; *) FILE_ABS="$PWD/$FILE_ABS" ;; esac
+            SCAN_DIR=$(dirname "$FILE_ABS")
+            SCAN_REST=$(basename "$FILE_ABS")
+            while [ ! -d "$SCAN_DIR" ] && [ "$SCAN_DIR" != "/" ] && [ "$SCAN_DIR" != "." ]; do
+                SCAN_REST="$(basename "$SCAN_DIR")/$SCAN_REST"
+                SCAN_DIR=$(dirname "$SCAN_DIR")
+            done
+            SCAN_DIR_P=$(cd "$SCAN_DIR" 2>/dev/null && pwd -P) || SCAN_DIR_P="$SCAN_DIR"
+            case "$SCAN_DIR_P/$SCAN_REST" in
+                "$REPO_ROOT_P"/*) ;;   # inside the working tree — keep blocking
+                *) exit 0 ;;           # outside — cannot affect this branch
+            esac
+        fi
+
         BLOCK_REASON="edits a non-documentation file ($FILE_PATH)"
     fi
     # --------------------------------------
