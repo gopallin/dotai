@@ -141,9 +141,21 @@ RECEIPT_STATUS=$(sed -n 's/^status=//p' "$RECEIPT" | head -1)
 RECEIPT_TREE=$(sed -n 's/^tree=//p' "$RECEIPT" | head -1)
 
 # ⚠️ Must stay identical to precommit_tree_fingerprint() in commands/precommit.sh.
-# tests/stop-guard.test.sh runs both against one tree and fails if they diverge.
-CURRENT_TREE=$({ git rev-parse HEAD 2>/dev/null; git status --porcelain 2>/dev/null; } \
-  | shasum -a 256 | cut -d' ' -f1)
+# tests/precommit.test.sh runs the pipeline and then this guard against one
+# tree, and fails if they diverge.
+CURRENT_TREE=$({
+    git rev-parse HEAD 2>/dev/null
+    git status --porcelain -uall 2>/dev/null
+    # Status lines alone are not enough: re-editing a file that was ALREADY
+    # dirty leaves porcelain byte-identical, so a PASS survived arbitrary
+    # further edits — the exact thing the receipt exists to prevent. Caught by
+    # tests/precommit.test.sh. --binary so a second edit to a binary file
+    # registers too, instead of collapsing to "Binary files differ".
+    git diff HEAD --binary 2>/dev/null
+    # git diff says nothing about untracked content, so hash it directly.
+    git ls-files --others --exclude-standard -z 2>/dev/null \
+      | xargs -0 shasum -a 256 2>/dev/null
+} | shasum -a 256 | cut -d' ' -f1)
 
 if [[ "$RECEIPT_STATUS" != "PASS" ]]; then
   echo "⛔ /precommit ran but did not pass (receipt: status=${RECEIPT_STATUS:-unknown})." >&2
