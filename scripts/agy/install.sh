@@ -67,8 +67,11 @@ done
 # path so it points at the skill dir instead of the Claude commands dir.
 cp "$DOTAI_DIR/commands/precommit.sh" "$AGY_SKILLS/precommit/precommit.sh"
 chmod +x "$AGY_SKILLS/precommit/precommit.sh"
-sed -i '' "s|\.claude/commands/precommit\.sh|.gemini/config/skills/precommit/precommit.sh|g" "$AGY_SKILLS/precommit/SKILL.md" 2>/dev/null || \
-sed -i "s|\.claude/commands/precommit\.sh|.gemini/config/skills/precommit/precommit.sh|g" "$AGY_SKILLS/precommit/SKILL.md"
+# Anchored on $HOME so only the execution line moves: the project-local
+# override path in prose stays .claude/commands/precommit.sh on every CLI,
+# because that is where precommit.sh looks for it.
+sed -i '' 's|[$]HOME/\.claude/commands/precommit\.sh|$HOME/.gemini/config/skills/precommit/precommit.sh|g' "$AGY_SKILLS/precommit/SKILL.md" 2>/dev/null || \
+sed -i 's|[$]HOME/\.claude/commands/precommit\.sh|$HOME/.gemini/config/skills/precommit/precommit.sh|g' "$AGY_SKILLS/precommit/SKILL.md"
 echo "✅ /precommit script  → $AGY_SKILLS/precommit/precommit.sh"
 
 cp "$DOTAI_DIR/commands/prompt-template.sh" "$AGY_SKILLS/prompt/prompt-template.sh"

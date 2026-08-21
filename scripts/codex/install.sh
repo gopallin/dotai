@@ -74,9 +74,12 @@ for cmd in precommit plan map next-ticket handoff prompt; do
   cp "$DOTAI_DIR/commands/$cmd.md" "$CODEX_DIR/prompts/$cmd.md"
 done
 
-# Replace hardcoded .claude path with .codex for Codex CLI
-sed -i '' 's|\.claude/commands/precommit\.sh|\.codex/prompts/precommit\.sh|g' "$CODEX_DIR/prompts/precommit.md" 2>/dev/null || \
-sed -i 's|\.claude/commands/precommit\.sh|\.codex/prompts/precommit\.sh|g' "$CODEX_DIR/prompts/precommit.md"
+# Point the execution line at the Codex copy of the helper script.
+# Anchored on $HOME so it rewrites ONLY that line: precommit.md also names the
+# project-local override path `.claude/commands/precommit.sh` in prose, and that
+# one is CLI-independent — precommit.sh looks for it under .claude/ everywhere.
+sed -i '' 's|[$]HOME/\.claude/commands/precommit\.sh|$HOME/.codex/prompts/precommit.sh|g' "$CODEX_DIR/prompts/precommit.md" 2>/dev/null || \
+sed -i 's|[$]HOME/\.claude/commands/precommit\.sh|$HOME/.codex/prompts/precommit.sh|g' "$CODEX_DIR/prompts/precommit.md"
 
 # Copy helper scripts
 cp "$DOTAI_DIR/commands/precommit.sh" "$CODEX_DIR/prompts/precommit.sh"

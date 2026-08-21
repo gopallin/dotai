@@ -118,8 +118,17 @@ if [[ -n "$GIT_DIR" ]]; then
   if [[ -f "$RECEIPT" ]]; then
     RECEIPT_STATUS=$(sed -n 's/^status=//p' "$RECEIPT" | head -1)
     RECEIPT_TREE=$(sed -n 's/^tree=//p' "$RECEIPT" | head -1)
-    CURRENT_TREE=$({ git rev-parse HEAD 2>/dev/null; git status --porcelain 2>/dev/null; } \
-      | shasum -a 256 | cut -d' ' -f1)
+    CURRENT_TREE=$({
+      git rev-parse HEAD 2>/dev/null
+      git status --porcelain -uall 2>/dev/null
+      # Content, not just the status lines: re-editing an already-dirty file
+      # leaves porcelain byte-identical. See precommit_tree_fingerprint() in
+      # commands/precommit.sh — this must stay byte-for-byte equivalent to it,
+      # or every PASS mismatches and the gate blocks forever.
+      git diff HEAD --binary 2>/dev/null
+      git ls-files --others --exclude-standard -z 2>/dev/null \
+        | xargs -0 shasum -a 256 2>/dev/null
+    } | shasum -a 256 | cut -d' ' -f1)
     
     if [[ "$RECEIPT_STATUS" == "PASS" && "$RECEIPT_TREE" == "$CURRENT_TREE" ]]; then
       echo '{"decision": "allow"}'
