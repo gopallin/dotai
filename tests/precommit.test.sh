@@ -177,6 +177,189 @@ run_precommit "$D"
 [ "$RC" -ne 0 ] && ok || bad "declared PASS with non-zero exit must not pass"
 [ "$(receipt_field "$D" status)" = FAIL ] && ok || bad "lying override: receipt should be FAIL"
 
+# ── Laravel: resolve the toolchain, never assume pint + host php ──────────────
+#
+# Written after 2026-08-24, when the laravel arm met a repo that lints with phpcs
+# and runs entirely in Docker. `./vendor/bin/pint` failed at second zero, the
+# receipt went FAIL, and stop-guard then blocked every stop for the rest of the
+# session with no reachable fix. These assert the rules that removed that dead
+# end — not the shape of the output.
+
+# A laravel fixture: artisan + a fake php on PATH, so the runner resolves to
+# "host php" and the tests stay hermetic (no docker, no real PHP).
+new_laravel_repo() {
+  local d
+  d=$(new_repo "$1")
+  printf '#!/bin/sh\nexit 0\n' > "$d/artisan"
+  mkdir -p "$d/bin" "$d/vendor/bin"
+  # Fake php: records its argv so a test can prove `artisan test` was reached.
+  printf '#!/bin/sh\necho "php $*" >> "%s/php.log"\nexit 0\n' "$d" > "$d/bin/php"
+  chmod +x "$d/bin/php"
+  printf '%s' "$d"
+}
+
+# $1=dir $2=exit code, $3.. = CSV rows after the header. Records argv so the
+# scoping rule can be checked. Rows must not contain single quotes.
+fake_phpcs() {
+  local d="$1" rc="$2" r
+  shift 2
+  {
+    printf '#!/bin/sh\n'
+    printf 'for a in "$@"; do echo "$a" >> "%s/phpcs.argv"; done\n' "$d"
+    printf 'echo "File,Line,Column,Type,Message,Source,Severity,Fixable"\n'
+    for r in "$@"; do printf "echo '%s'\n" "$r"; done
+    printf 'exit %s\n' "$rc"
+  } > "$d/vendor/bin/phpcs"
+  chmod +x "$d/vendor/bin/phpcs"
+}
+
+# Emits something that is not a CSV report at all — a real invocation failure.
+fake_phpcs_broken() {
+  printf '#!/bin/sh\necho "ERROR: the standard \\"nope\\" is not installed"\nexit 3\n' \
+    > "$1/vendor/bin/phpcs"
+  chmod +x "$1/vendor/bin/phpcs"
+}
+
+ruleset() { printf '<?xml version="1.0"?><ruleset name="p"/>\n' > "$1/phpcs.xml"; }
+
+run_laravel() {
+  local d="$1"
+  OUT=$(cd "$d" && PATH="$d/bin:$PATH" env -u DOTAI_PRECOMMIT_DISPATCHED \
+        -u PRECOMMIT_PHP_RUNNER ENABLE_LSP_TOOL=0 bash "$PRECOMMIT" 2>&1)
+  RC=$?
+}
+
+# phpcs is used when there is no pint — the case that used to be an instant FAIL.
+D=$(new_laravel_repo laravel-phpcs)
+ruleset "$D"
+fake_phpcs "$D" 2 '"src.php",2,1,warning,"Usage of ELSE IF is discouraged",X,5,1'
+printf '<?php\n// touched\n' > "$D/src.php"
+run_laravel "$D"
+[ "$RC" -eq 0 ] && ok || bad "laravel+phpcs should pass, got rc=$RC: $OUT"
+printf '%s' "$OUT" | grep -q 'Linter: phpcs' && ok \
+  || bad "should name phpcs as the resolved linter: $OUT"
+[ "$(receipt_field "$D" mode)" = "laravel" ] && ok \
+  || bad "phpcs repo must stay mode=laravel, not fall back to generic"
+grep -q 'artisan test' "$D/php.log" 2>/dev/null && ok \
+  || bad "the test step must still run after lint"
+printf '%s' "$OUT" | grep -q '1 warning' && ok \
+  || bad "warning count must be surfaced on the PASS path: $OUT"
+
+# The rule the real run exposed: an ERROR on a line the change never touched must
+# not gate. phpcs lints whole files, so a three-line edit to a legacy file
+# reports that file's pre-existing violations too.
+D=$(new_laravel_repo laravel-legacy-error)
+ruleset "$D"
+fake_phpcs "$D" 2 '"legacy.php",9,1,error,"The closing brace must go on the next line",X,5,1'
+printf '<?php\n// l2\n// l3\n// l4\n// l5\n// l6\n// l7\n// l8\n// l9\n' > "$D/legacy.php"
+git -C "$D" add -A && git -C "$D" commit -qm base
+# Touch line 2 only; the reported error is on line 9.
+printf '<?php\n// CHANGED\n// l3\n// l4\n// l5\n// l6\n// l7\n// l8\n// l9\n' > "$D/legacy.php"
+run_laravel "$D"
+[ "$RC" -eq 0 ] && ok || bad "an error on an untouched line must not gate: $OUT"
+printf '%s' "$OUT" | grep -q 'change did not touch' && ok \
+  || bad "the non-gated error must still be reported: $OUT"
+
+# ...but an error on a line the change DID add gates, and the suite must not run.
+D=$(new_laravel_repo laravel-own-error)
+ruleset "$D"
+fake_phpcs "$D" 2 '"src.php",2,1,error,"Expected 1 space after IF keyword",X,5,1'
+printf '<?php\nif(true){}\n' > "$D/src.php"
+run_laravel "$D"
+[ "$RC" -ne 0 ] && ok || bad "an error on an added line must fail the gate: $OUT"
+[ "$(receipt_field "$D" status)" = "FAIL" ] && ok || bad "error run must write status=FAIL"
+[ ! -f "$D/php.log" ] && ok || bad "artisan test must not run after lint failed"
+
+# A real invocation failure is never mistaken for "no findings".
+D=$(new_laravel_repo laravel-phpcs-broken)
+ruleset "$D"
+fake_phpcs_broken "$D"
+printf '<?php\n// x\n' > "$D/src.php"
+run_laravel "$D"
+[ "$RC" -ne 0 ] && ok || bad "a phpcs that cannot run must fail the gate: $OUT"
+printf '%s' "$OUT" | grep -q 'invocation failed' && ok \
+  || bad "should say the invocation failed, not report zero findings: $OUT"
+
+# Only the pending .php files, never the whole repo.
+D=$(new_laravel_repo laravel-scope)
+ruleset "$D"
+fake_phpcs "$D" 0
+printf '<?php\n// committed, untouched\n' > "$D/old.php"
+git -C "$D" add -A && git -C "$D" commit -qm base
+printf '<?php\n// pending\n' > "$D/new.php"
+run_laravel "$D"
+grep -qx 'new.php' "$D/phpcs.argv" && ok || bad "pending file should be linted"
+grep -qx 'old.php' "$D/phpcs.argv" && bad "untouched committed file must not be linted" || ok
+
+# pint wins when both are available — it is the Laravel default.
+D=$(new_laravel_repo laravel-pint-first)
+ruleset "$D"
+fake_phpcs "$D" 2 '"src.php",2,1,error,"would fail",X,5,1'
+printf '#!/bin/sh\nexit 0\n' > "$D/vendor/bin/pint"; chmod +x "$D/vendor/bin/pint"
+printf '<?php\n// x\n' > "$D/src.php"
+run_laravel "$D"
+[ "$RC" -eq 0 ] && ok || bad "pint should be preferred over a failing phpcs: $OUT"
+printf '%s' "$OUT" | grep -q 'Linter: pint' && ok || bad "should name pint: $OUT"
+
+# No linter at all is a hard FAIL naming both candidates — not a quiet pass, and
+# not a fall-through to generic mode.
+D=$(new_laravel_repo laravel-no-linter)
+printf '<?php\n// x\n' > "$D/src.php"
+run_laravel "$D"
+[ "$RC" -ne 0 ] && ok || bad "a laravel repo with no linter must not pass"
+printf '%s' "$OUT" | grep -q 'pint' && printf '%s' "$OUT" | grep -q 'phpcs' && ok \
+  || bad "the failure must name both linter candidates: $OUT"
+
+# PRECOMMIT_PHP_RUNNER overrides everything, including a usable host php.
+D=$(new_laravel_repo laravel-runner-override)
+ruleset "$D"
+fake_phpcs "$D" 0
+printf '<?php\n// x\n' > "$D/src.php"
+printf '#!/bin/sh\necho "prefix $*" >> "%s/prefix.log"\nexec "$@"\n' "$D" > "$D/bin/wrap"
+chmod +x "$D/bin/wrap"
+OUT=$(cd "$D" && PATH="$D/bin:$PATH" env -u DOTAI_PRECOMMIT_DISPATCHED \
+      ENABLE_LSP_TOOL=0 PRECOMMIT_PHP_RUNNER="wrap" bash "$PRECOMMIT" 2>&1)
+RC=$?
+[ "$RC" -eq 0 ] && ok || bad "runner override should pass: $OUT"
+printf '%s' "$OUT" | grep -q 'PRECOMMIT_PHP_RUNNER' && ok \
+  || bad "should report that the runner came from the override: $OUT"
+grep -q 'prefix' "$D/prefix.log" 2>/dev/null && ok \
+  || bad "the override prefix must actually wrap the commands"
+
+# A project pins its runner in .claude/precommit.env, and — unlike a project
+# *pipeline* — it counts even untracked, because a runner cannot declare PASS.
+D=$(new_laravel_repo laravel-project-env)
+ruleset "$D"
+fake_phpcs "$D" 0
+printf '<?php\n// x\n' > "$D/src.php"
+printf '#!/bin/sh\necho "wrapped $*" >> "%s/prefix.log"\nexec "$@"\n' "$D" > "$D/bin/wrap"
+chmod +x "$D/bin/wrap"
+mkdir -p "$D/.claude"
+printf 'PRECOMMIT_PHP_RUNNER=wrap\n' > "$D/.claude/precommit.env"
+run_laravel "$D"
+[ "$RC" -eq 0 ] && ok || bad "project precommit.env runner should pass: $OUT"
+printf '%s' "$OUT" | grep -q 'precommit.env' && ok \
+  || bad "should report the runner came from .claude/precommit.env: $OUT"
+grep -q 'wrapped' "$D/prefix.log" 2>/dev/null && ok \
+  || bad "the pinned prefix must actually wrap the commands"
+
+# The env var still wins over the file, so a one-off override stays possible.
+printf '#!/bin/sh\necho "env-wins $*" >> "%s/envwins.log"\nexec "$@"\n' "$D" > "$D/bin/wrap2"
+chmod +x "$D/bin/wrap2"
+OUT=$(cd "$D" && PATH="$D/bin:$PATH" env -u DOTAI_PRECOMMIT_DISPATCHED \
+      ENABLE_LSP_TOOL=0 PRECOMMIT_PHP_RUNNER="wrap2" bash "$PRECOMMIT" 2>&1)
+[ -f "$D/envwins.log" ] && ok || bad "PRECOMMIT_PHP_RUNNER must take precedence over the file"
+
+# The file is config, not code: it must not be sourced.
+D=$(new_laravel_repo laravel-env-not-sourced)
+ruleset "$D"
+fake_phpcs "$D" 0
+printf '<?php\n// x\n' > "$D/src.php"
+mkdir -p "$D/.claude"
+printf 'touch %s/PWNED\nPRECOMMIT_PHP_RUNNER=\n' "$D" > "$D/.claude/precommit.env"
+run_laravel "$D"
+[ ! -f "$D/PWNED" ] && ok || bad ".claude/precommit.env must never be executed"
+
 # ── Receipt parity with stop-guard ───────────────────────────────────────────
 #
 # Runs the real guard rather than re-deriving the fingerprint, so this fails if

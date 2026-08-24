@@ -173,6 +173,21 @@ run_step() {
   fi
 }
 
+# Same failure shape as run_step, for a step that cannot run inside run_step's
+# command substitution because it has to set globals in this shell (see
+# laravel_resolve_runner).
+abort_step() {
+  echo "❌ $1 (0s)"
+  shift
+  printf '%s\n' "$@"
+  echo ""
+  echo "## Overall: ❌ FAIL"
+  echo "PRECOMMIT_STATUS=FAIL"
+  echo "PRECOMMIT_MODE=${STACK}"
+  write_receipt FAIL
+  exit 1
+}
+
 # ── Shell-repo steps ──────────────────────────────────────────────────────────
 #
 # Both return non-zero on failure so run_step reports ❌ and aborts. Never add
@@ -302,6 +317,294 @@ generic_secret_scan() {
   return $rc
 }
 
+# ── Laravel steps — resolve the toolchain instead of assuming it ──────────────
+#
+# The laravel arm used to be two hard-coded lines, `./vendor/bin/pint` then
+# `php artisan test`, and both assumptions break on a real Laravel repo:
+#
+#   * The linter may be phpcs (squizlabs/php_codesniffer + phpcs.xml) rather than
+#     pint. Observed 2026-08-24 in nxl-shipping-server: composer requires
+#     php_codesniffer, the repo ships phpcs.xml, and there is no pint.json and no
+#     vendor/bin/pint.
+#   * `php` may not be on the host at all, because the whole toolchain lives in
+#     Docker. Same repo: `command -v php` finds nothing.
+#
+# The consequence was worse than a wrong result. lint_fix failed at second zero,
+# wrote a FAIL receipt, and stop-guard then refused every stop for the rest of
+# the session with no reachable fix — the same dead end that generic mode was
+# added to remove, reappearing inside a *detected* stack. An unpassable gate does
+# not stay unrun; it gets worked around.
+#
+# So: resolve pint-or-phpcs and host-or-container, print what was resolved so a
+# wrong pick is visible rather than silent, and when the choice is genuinely
+# ambiguous, fail with the candidates named instead of guessing.
+#
+# bash 3.2 throughout (macOS /bin/bash): no mapfile, no associative arrays.
+
+# Command prefix for php / vendor binaries. Empty array = run on the host.
+LARAVEL_RUN=()
+LARAVEL_RUN_WHERE=""
+LARAVEL_LINTER=""
+LARAVEL_LINTER_DESC=""
+LARAVEL_PHP_FILES=()
+LARAVEL_WARN_FILE=""
+
+# Running containers with this repo's root bind-mounted. Matched by mount source,
+# not by container name: a name convention is a guess, a mount is a fact.
+laravel_docker_candidates() {
+  local root name
+  command -v docker >/dev/null 2>&1 || return 0
+  root=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
+  [[ -n "$root" ]] || return 0
+  for name in $(docker ps --format '{{.Names}}' 2>/dev/null); do
+    if docker inspect -f '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' "$name" 2>/dev/null \
+         | grep -qxF "$root"; then
+      echo "$name"
+    fi
+  done
+}
+
+# Where this repo's root is mounted inside $1, so the container's working
+# directory matches the repo-relative paths we pass to phpcs and artisan.
+laravel_mount_dest() {
+  local root
+  root=$(git rev-parse --show-toplevel 2>/dev/null)
+  docker inspect \
+    -f "{{range .Mounts}}{{if eq .Source \"${root}\"}}{{.Destination}}{{end}}{{\"\n\"}}{{end}}" \
+    "$1" 2>/dev/null | grep -v '^$' | head -1
+}
+
+# A project may pin its runner in .claude/precommit.env as
+#   PRECOMMIT_PHP_RUNNER=docker exec -w /var/www/app app
+#
+# Unlike .claude/commands/precommit.sh, this file is honoured whether or not git
+# tracks it, and the difference is not an inconsistency. A project *pipeline* can
+# declare PASS, so an untracked one is indistinguishable from a gate the current
+# session invented for itself. A runner is only *where* the real linter and the
+# real suite execute — it cannot manufacture a pass, and a wrong value makes the
+# steps fail rather than succeed. Requiring a commit for it would just push
+# people back to exporting a variable every session, which is how the gate
+# became unpassable in the first place.
+laravel_runner_from_project_env() {
+  local root f
+  root=$(git rev-parse --show-toplevel 2>/dev/null) || return 0
+  f="${root:-.}/.claude/precommit.env"
+  [[ -f "$f" ]] || return 0
+  # Only this one key, and no shell evaluation of the file: it is config, not code.
+  sed -n 's/^[[:space:]]*PRECOMMIT_PHP_RUNNER[[:space:]]*=[[:space:]]*//p' "$f" \
+    | sed 's/^"//; s/"$//; s/^'"'"'//; s/'"'"'$//' | tail -1
+}
+
+laravel_resolve_runner() {
+  local cands n name dest from_env
+
+  # 1. Explicit override always wins. Deliberately word-split: the value is a
+  #    command prefix, e.g. PRECOMMIT_PHP_RUNNER='docker exec -w /app api'.
+  if [[ -n "${PRECOMMIT_PHP_RUNNER:-}" ]]; then
+    LARAVEL_RUN=(${PRECOMMIT_PHP_RUNNER})
+    LARAVEL_RUN_WHERE="PRECOMMIT_PHP_RUNNER (${PRECOMMIT_PHP_RUNNER})"
+    return 0
+  fi
+
+  # 1b. Then the project's pinned runner.
+  from_env=$(laravel_runner_from_project_env)
+  if [[ -n "$from_env" ]]; then
+    LARAVEL_RUN=(${from_env})
+    LARAVEL_RUN_WHERE=".claude/precommit.env (${from_env})"
+    return 0
+  fi
+
+  # 2. A host php is the simple case and stays the default.
+  if command -v php >/dev/null 2>&1; then
+    LARAVEL_RUN=()
+    LARAVEL_RUN_WHERE="host php ($(command -v php))"
+    return 0
+  fi
+
+  # 3. No host php: the toolchain is containerised.
+  cands=$(laravel_docker_candidates)
+  n=$(printf '%s' "$cands" | grep -c . )
+
+  if [[ "$n" -eq 0 ]]; then
+    LARAVEL_RESOLVE_ERR="no php on the host, and no running container has this repo bind-mounted.
+    Start the project's containers, or pin a runner in .claude/precommit.env:
+      PRECOMMIT_PHP_RUNNER=docker exec -w /var/www/app app"
+    return 1
+  fi
+
+  if [[ "$n" -gt 1 ]]; then
+    # Several containers mount the same host directory. Any pick would be a
+    # guess about which one owns the app, and running the suite in the wrong
+    # container is a false PASS — the one outcome this pipeline must not produce.
+    LARAVEL_RESOLVE_ERR="no php on the host, and ${n} running containers mount this repo:
+$(printf '%s' "$cands" | sed 's/^/      - /')
+    Which of them owns this app cannot be inferred from a mount, and running the
+    suite in the wrong container is a false PASS. Pin it in .claude/precommit.env:
+      PRECOMMIT_PHP_RUNNER=docker exec -w $(laravel_mount_dest "$(printf '%s' "$cands" | head -1)") $(printf '%s' "$cands" | head -1)"
+    return 1
+  fi
+
+  name=$(printf '%s' "$cands" | head -1)
+  dest=$(laravel_mount_dest "$name")
+  if [[ -z "$dest" ]]; then
+    LARAVEL_RESOLVE_ERR="container ${name} mounts this repo but its mount destination could not be read"
+    return 1
+  fi
+
+  if ! docker exec -w "$dest" "$name" php -v >/dev/null 2>&1; then
+    LARAVEL_RESOLVE_ERR="container ${name} mounts this repo at ${dest} but has no working php"
+    return 1
+  fi
+
+  LARAVEL_RUN=(docker exec -w "$dest" "$name")
+  LARAVEL_RUN_WHERE="docker exec ${name} (repo at ${dest})"
+  return 0
+}
+
+laravel_resolve_linter() {
+  local f
+  if [[ -f "./vendor/bin/pint" ]]; then
+    LARAVEL_LINTER="pint"
+    LARAVEL_LINTER_DESC="pint (vendor/bin/pint)"
+    return 0
+  fi
+  if [[ -f "./vendor/bin/phpcs" ]]; then
+    for f in phpcs.xml phpcs.xml.dist; do
+      if [[ -f "$f" ]]; then
+        LARAVEL_LINTER="phpcs"
+        LARAVEL_LINTER_DESC="phpcs (${f}, pending .php files only)"
+        return 0
+      fi
+    done
+  fi
+  LARAVEL_RESOLVE_ERR="no linter found: neither vendor/bin/pint nor vendor/bin/phpcs+phpcs.xml.
+    Run composer install, or add one of them. A Laravel repo with no linter is not
+    something this pipeline will paper over."
+  return 1
+}
+
+# Only the .php files a commit from here would capture. Whole-repo phpcs would
+# make runtime a function of repo size and fail on pre-existing dirt nobody
+# touched — the same scoping the generic steps already use.
+laravel_collect_php() {
+  local f
+  LARAVEL_PHP_FILES=()
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    case "$f" in *.php) [[ -f "$f" ]] && LARAVEL_PHP_FILES[${#LARAVEL_PHP_FILES[@]}]="$f" ;; esac
+  done < <(git status --porcelain -uall 2>/dev/null | sed 's/^...//' | sed 's/.* -> //')
+}
+
+# Run a command through the resolved prefix. A function rather than
+# "${LARAVEL_RUN[@]}" at each call site because bash 3.2 (macOS /bin/bash) treats
+# an empty array's [@] expansion as an unbound variable under `set -u`, so the
+# host-php case — the common one — aborted with "LARAVEL_RUN[@]: unbound
+# variable". Caught by tests/precommit.test.sh.
+laravel_run() {
+  if [[ ${#LARAVEL_RUN[@]} -eq 0 ]]; then
+    "$@"
+  else
+    "${LARAVEL_RUN[@]}" "$@"
+  fi
+}
+
+# Added/changed line numbers for one pending file, one per line. A file that HEAD
+# does not know (new or untracked) counts in full.
+laravel_added_lines() {
+  local f="$1"
+  if git rev-parse --verify -q HEAD >/dev/null 2>&1 \
+     && git cat-file -e "HEAD:$f" 2>/dev/null; then
+    git diff -U0 HEAD -- "$f" 2>/dev/null | awk '
+      /^@@/ {
+        if (match($0, /\+[0-9]+(,[0-9]+)?/)) {
+          spec  = substr($0, RSTART + 1, RLENGTH - 1)
+          n     = split(spec, p, ",")
+          start = p[1] + 0
+          count = (n > 1 ? p[2] + 0 : 1)
+          for (i = 0; i < count; i++) print start + i
+        }
+      }'
+  else
+    awk '{ print NR }' "$f" 2>/dev/null
+  fi
+}
+
+# phpcs lints whole files, so pointing it at the pending files reports every
+# legacy violation in them too. Observed 2026-08-24 in nxl-shipping-server: a
+# change to three lines of BixolonService.php surfaced a PSR2 error on line 28,
+# which the change never touched — and gating on that is the "fail on
+# pre-existing dirt nobody touched" mistake the generic steps already avoid by
+# scoping to pending files. Scoping to pending *files* is not enough here.
+#
+# So findings are attributed to added/changed lines: an error on a line this
+# change introduced fails the step, anything else is reported and not gated.
+# That keeps the step a real gate — it can still fail, on your own lines — which
+# is the line `|| true` would have crossed.
+laravel_lint() {
+  local csv keys f line type own=0 legacy=0 warn=0 rest
+  if [[ "$LARAVEL_LINTER" == "pint" ]]; then
+    laravel_run ./vendor/bin/pint
+    return $?
+  fi
+
+  if [[ ${#LARAVEL_PHP_FILES[@]} -eq 0 ]]; then
+    echo "no pending .php files to lint"
+    return 0
+  fi
+
+  # --basepath=. so the report's paths are repo-relative and comparable to the
+  # git-derived ones, even when phpcs runs inside a container.
+  csv=$(laravel_run ./vendor/bin/phpcs --report=csv --basepath=. \
+          "${LARAVEL_PHP_FILES[@]}" 2>&1)
+
+  # phpcs exits non-zero merely for *having* findings, so its status cannot be
+  # used. A genuine invocation failure (bad standard, PHP fatal) is caught by the
+  # header being absent instead — never swallowed.
+  if ! printf '%s' "$csv" | head -1 | grep -q '^File,Line,Column,Type,'; then
+    echo "phpcs did not produce a CSV report — invocation failed:"
+    printf '%s\n' "$csv" | head -20
+    return 1
+  fi
+
+  keys=$(mktemp -t dotai-phpcs-keys)
+  for f in "${LARAVEL_PHP_FILES[@]}"; do
+    laravel_added_lines "$f" | sed "s|^|${f}:|"
+  done > "$keys"
+
+  while IFS='|' read -r f line type rest; do
+    [[ -n "$f" ]] || continue
+    if [[ "$type" == "error" ]]; then
+      if grep -qxF "${f}:${line}" "$keys"; then
+        own=$((own + 1))
+        echo "  ✗ ${f}:${line} ${rest}"
+      else
+        legacy=$((legacy + 1))
+      fi
+    else
+      warn=$((warn + 1))
+    fi
+  done < <(printf '%s\n' "$csv" \
+            | sed -nE 's/^"([^"]*)",([0-9]+),[0-9]+,(error|warning),"?(.*)$/\1|\2|\3|\4/p')
+
+  rm -f "$keys"
+
+  # run_step swallows a passing step's output, so counts reached on the PASS path
+  # would otherwise be invisible. Hand them back through a file.
+  [[ -n "$LARAVEL_WARN_FILE" ]] \
+    && printf 'warn=%s legacy=%s' "$warn" "$legacy" > "$LARAVEL_WARN_FILE"
+
+  if [[ "$own" -gt 0 ]]; then
+    echo ""
+    echo "${own} phpcs error(s) on lines this change added or modified."
+    return 1
+  fi
+  return 0
+}
+
+laravel_test() {
+  laravel_run php artisan test
+}
+
 # ── Tech stack detection ──────────────────────────────────────────────────────
 
 if [[ -f "artisan" ]]; then
@@ -331,8 +634,33 @@ echo ""
 
 case "$STACK" in
   laravel)
-    run_step "lint_fix"  ./vendor/bin/pint
-    run_step "test"      php artisan test
+    LARAVEL_RESOLVE_ERR=""
+    laravel_resolve_runner || abort_step "php_runner" "$LARAVEL_RESOLVE_ERR"
+    laravel_resolve_linter || abort_step "lint"       "$LARAVEL_RESOLVE_ERR"
+    laravel_collect_php
+
+    # Printed before the steps, not inside them: run_step swallows a passing
+    # step's output, and "lint passed" without saying *which* linter ran where is
+    # the same claim as "something ran somewhere".
+    echo "Runner: ${LARAVEL_RUN_WHERE}"
+    echo "Linter: ${LARAVEL_LINTER_DESC}"
+    echo "Pending .php files: ${#LARAVEL_PHP_FILES[@]}"
+    echo ""
+
+    LARAVEL_WARN_FILE=$(mktemp -t dotai-precommit-warn)
+    run_step "lint" laravel_lint
+    if [[ -s "$LARAVEL_WARN_FILE" ]]; then
+      _w=$(sed -n 's/.*warn=\([0-9]*\).*/\1/p' "$LARAVEL_WARN_FILE")
+      _l=$(sed -n 's/.*legacy=\([0-9]*\).*/\1/p' "$LARAVEL_WARN_FILE")
+      if [[ "${_w:-0}" != "0" || "${_l:-0}" != "0" ]]; then
+        echo "   ↳ not gated: ${_w:-0} warning(s), ${_l:-0} error(s) on lines this"
+        echo "     change did not touch. phpcs lints whole files; only your own"
+        echo "     added/modified lines gate here."
+      fi
+    fi
+    rm -f "$LARAVEL_WARN_FILE"
+
+    run_step "test" laravel_test
     ;;
   vue|node)
     run_step "lint_fix"  yarn lint:fix

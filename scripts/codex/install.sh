@@ -131,6 +131,10 @@ cp "$DOTAI_DIR/hooks/shared/secret-guard.sh" "$CODEX_DIR/hooks/shared/secret-gua
 chmod +x "$CODEX_DIR/hooks/shared/secret-guard.sh"
 echo "✅ shared/secret-guard.sh  → $CODEX_DIR/hooks/shared/secret-guard.sh"
 
+cp "$DOTAI_DIR/hooks/shared/deployed-guard.sh" "$CODEX_DIR/hooks/shared/deployed-guard.sh"
+chmod +x "$CODEX_DIR/hooks/shared/deployed-guard.sh"
+echo "✅ shared/deployed-guard.sh → $CODEX_DIR/hooks/shared/deployed-guard.sh"
+
 # grounding-guard (blocks the first code edit until /ground passes)
 cp "$DOTAI_DIR/hooks/codex/grounding-guard.sh" "$CODEX_DIR/hooks/grounding-guard.sh"
 chmod +x "$CODEX_DIR/hooks/grounding-guard.sh"
@@ -219,13 +223,18 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
       "hooks": [
         {
           "type": "command",
+          "command": "bash \($home)/.codex/hooks/shared/deployed-guard.sh",
+          "timeout": 5
+        },
+        {
+          "type": "command",
           "command": "bash \($home)/.codex/hooks/grounding-guard.sh",
           "timeout": 10
         }
       ]
     }
   ] + (.hooks.PreToolUse // [] | map(select(
-    (.hooks[0].command | test("branch-guard\\.sh$|context-budget-guard\\.sh$|glab-guard\\.sh$|secret-guard\\.sh$|grounding-guard\\.sh$")) | not
+    (.hooks[0].command | test("branch-guard\\.sh$|context-budget-guard\\.sh$|glab-guard\\.sh$|secret-guard\\.sh$|grounding-guard\\.sh$|deployed-guard\\.sh$")) | not
   )))) |
   # Register SessionStart hook for handoff reminders after /clear
   .hooks.SessionStart = ([

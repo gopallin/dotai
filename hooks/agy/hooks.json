@@ -74,6 +74,20 @@
       }
     ]
   },
+  "dotai-deployed-guard": {
+    "PreToolUse": [
+      {
+        "matcher": "write_to_file|replace_file_content|edit_notebook",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.gemini/hooks/shared-guard-adapter.sh ~/.gemini/hooks/shared/deployed-guard.sh",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  },
   "dotai-context-budget-guard": {
     "PreInvocation": [
       {
