@@ -35,6 +35,11 @@ mktranscript() { # $1 = content; writes file, echoes path
   echo "$f"
 }
 
+# Direct the skip log to a tmp file so tests never touch ~/.claude.
+# The real guard reads DOTAI_SKIP_LOG if set, falling back to ~/.claude/...
+SKIP_LOG="$TMP/grounding-skip.log"
+export DOTAI_SKIP_LOG="$SKIP_LOG"
+
 # run <name> <cwd> <transcript_path> <file_path> <session_id> <expected_exit>
 run() {
   local name="$1" cwd="$2" tpath="$3" fpath="$4" sid="$5" expect="$6"
@@ -75,11 +80,15 @@ run "(c) .md edit -> exit 0" "$FEAT" "$T_NONE" "README.md" "test-c" 0
 
 # (d) SKIP marker -> allow + log
 run "(d) SKIP -> exit 0" "$FEAT" "$T_SKIP" "src/x.php" "test-d" 0
-SKIP_LOG="${HOME}/.claude/usage-data/grounding-skip.log"
 if grep -q 'typo fix no logic change' "$SKIP_LOG" 2>/dev/null; then
-  echo "  ✅ (d) skip reason logged"; PASS=$((PASS+1))
+  echo "  ✅ (d) skip reason logged to tmp log"; PASS=$((PASS+1))
 else
   echo "  ❌ (d) skip reason NOT logged to $SKIP_LOG"; FAIL=$((FAIL+1))
+fi
+if grep -q 'test-d' "$SKIP_LOG" 2>/dev/null; then
+  echo "  ✅ (d) session_id present in log entry"; PASS=$((PASS+1))
+else
+  echo "  ❌ (d) session_id missing from log entry"; FAIL=$((FAIL+1))
 fi
 
 # (e) second code edit (counter preset to 1) -> allow without marker

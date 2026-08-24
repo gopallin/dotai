@@ -73,7 +73,8 @@ fi
 
 # ── First non-doc code edit: require a grounding marker ───────────────────────
 
-SKIP_LOG="${HOME}/.claude/usage-data/grounding-skip.log"
+# DOTAI_SKIP_LOG lets tests redirect to /tmp so they never touch the real log.
+SKIP_LOG="${DOTAI_SKIP_LOG:-${HOME}/.claude/usage-data/grounding-skip.log}"
 
 if grep -q 'GROUNDING_STATUS=PASS' "$TRANSCRIPT" 2>/dev/null; then
   echo "1" > "$COUNTER_FILE"   # advance: first edit grounded, trust the rest
@@ -82,9 +83,10 @@ fi
 
 if grep -q 'GROUNDING_STATUS=SKIP' "$TRANSCRIPT" 2>/dev/null; then
   # Log the skip reason as a quality signal (overuse => the gate isn't working).
+  # session_id is included so each skip can be traced back to its transcript.
   REASON=$(grep -o 'GROUNDING_STATUS=SKIP[^"]*' "$TRANSCRIPT" 2>/dev/null | tail -n 1)
   mkdir -p "$(dirname "$SKIP_LOG")" 2>/dev/null
-  echo "$(date '+%Y-%m-%d %H:%M:%S')	${CURRENT_BRANCH}	${FILE_PATH}	${REASON}" >> "$SKIP_LOG" 2>/dev/null
+  echo "$(date '+%Y-%m-%d %H:%M:%S')	${SESSION_ID}	${CURRENT_BRANCH}	${FILE_PATH}	${REASON}" >> "$SKIP_LOG" 2>/dev/null
   echo "1" > "$COUNTER_FILE"
   exit 0
 fi

@@ -130,6 +130,10 @@ cp "$DOTAI_DIR/hooks/shared/secret-guard.sh" "$GEMINI_DIR/hooks/shared/secret-gu
 chmod +x "$GEMINI_DIR/hooks/shared/secret-guard.sh"
 echo "✅ shared/secret-guard.sh → $GEMINI_DIR/hooks/shared/secret-guard.sh"
 
+cp "$DOTAI_DIR/hooks/shared/deployed-guard.sh" "$GEMINI_DIR/hooks/shared/deployed-guard.sh"
+chmod +x "$GEMINI_DIR/hooks/shared/deployed-guard.sh"
+echo "✅ shared/deployed-guard.sh → $GEMINI_DIR/hooks/shared/deployed-guard.sh"
+
 # context-budget-guard (advisory: reminds to start fresh when session grows large)
 cp "$DOTAI_DIR/hooks/agy/context-budget-guard.sh" "$GEMINI_DIR/hooks/context-budget-guard.sh"
 chmod +x "$GEMINI_DIR/hooks/context-budget-guard.sh"

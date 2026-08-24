@@ -140,6 +140,10 @@ cp "$DOTAI_DIR/hooks/shared/secret-guard.sh" "$CLAUDE_DIR/hooks/shared/secret-gu
 chmod +x "$CLAUDE_DIR/hooks/shared/secret-guard.sh"
 echo "✅ shared/secret-guard.sh     → $CLAUDE_DIR/hooks/shared/secret-guard.sh"
 
+cp "$DOTAI_DIR/hooks/shared/deployed-guard.sh" "$CLAUDE_DIR/hooks/shared/deployed-guard.sh"
+chmod +x "$CLAUDE_DIR/hooks/shared/deployed-guard.sh"
+echo "✅ shared/deployed-guard.sh   → $CLAUDE_DIR/hooks/shared/deployed-guard.sh"
+
 cp "$DOTAI_DIR/hooks/claude/secret-redact.sh" "$CLAUDE_DIR/hooks/claude/secret-redact.sh"
 chmod +x "$CLAUDE_DIR/hooks/claude/secret-redact.sh"
 echo "✅ claude/secret-redact.sh    → $CLAUDE_DIR/hooks/claude/secret-redact.sh"
@@ -228,6 +232,11 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
       "hooks": [
         {
           "type": "command",
+          "command": "bash \($home)/.claude/hooks/shared/deployed-guard.sh",
+          "timeout": 5
+        },
+        {
+          "type": "command",
           "command": "bash \($home)/.claude/hooks/claude/grounding-guard.sh",
           "timeout": 10
         }
@@ -248,7 +257,7 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
     # `complexity` and `read-dedup` even though neither is installed any more, so
     # that a re-install prunes their stale entries from an older settings.json.
     # Removing a name here orphans its registration forever. See docs/ABLATION.md.
-    (.hooks[0].command | test("shared/(complexity|branch|glab|secret)-guard\\.sh$|claude/(grounding|read-dedup|context-budget)-guard\\.sh$")) | not
+    (.hooks[0].command | test("shared/(complexity|branch|glab|secret|deployed)-guard\\.sh$|claude/(grounding|read-dedup|context-budget)-guard\\.sh$")) | not
   )))) |
   # Register PostToolUse hook. secret-redact rewrites the tool result via
   # `updatedToolOutput`, which is the only mechanism that withholds a credential
