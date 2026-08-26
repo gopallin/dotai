@@ -317,6 +317,20 @@ generic_secret_scan() {
   return $rc
 }
 
+# The three generic steps as one callable unit. Two callers reach it: the
+# `generic)` arm, and the node/vue arm when the repo declares no build and no
+# test script. Inlining the trio in both places is how the L1/L2/L3 checklist
+# came to exist twice in `ground` and `ship` and then drift — one concern, one
+# source.
+generic_steps() {
+  generic_collect
+  echo "Pending files inspected: ${#GENERIC_FILES[@]}"
+  echo ""
+  run_step "conflict_markers" generic_conflict_markers
+  run_step "file_syntax"      generic_syntax
+  run_step "secret_scan"      generic_secret_scan
+}
+
 # ── Laravel steps — resolve the toolchain instead of assuming it ──────────────
 #
 # The laravel arm used to be two hard-coded lines, `./vendor/bin/pint` then
@@ -605,6 +619,53 @@ laravel_test() {
   laravel_run php artisan test
 }
 
+# ── Node/Vue steps — resolve the runner and the script names, don't assume ────
+#
+# This branch used to be three hardcoded lines: `yarn lint:fix`, `yarn build`,
+# `yarn test:unit`. Two ways that reported a quality failure when nothing had
+# actually been checked:
+#   - an npm-only repo died at second zero with "yarn: command not found"
+#   - a repo whose scripts are named `test` (not `test:unit`) died on a missing
+#     script — the runner exits non-zero for those, so it looked like a real bug
+# Both are the pipeline being wrong about the project rather than the project
+# being broken, and in the receipt they are indistinguishable from a genuine FAIL.
+#
+# So: take the runner from the lockfile, and run only scripts the project
+# actually declares. This never silently narrows the gate — if the repo declares
+# neither a build- nor a test-shaped script that is a FAIL, and whatever did run
+# is printed by name, so a PASS can never be read as "everything was checked".
+
+# Sets NODE_PM and NODE_PM_SRC. Two outputs, so it assigns rather than echoes:
+# building the "(from …)" half as a nested command substitution inside the echo
+# swallowed the closing paren — the header printed "Runner: yarn (from yarn.lock"
+# and the test asserting the full string was the only thing that noticed.
+NODE_PM=""
+NODE_PM_SRC=""
+node_resolve_pm() {
+  if   [[ -f pnpm-lock.yaml    ]]; then NODE_PM=pnpm; NODE_PM_SRC="pnpm-lock.yaml"
+  elif [[ -f yarn.lock         ]]; then NODE_PM=yarn; NODE_PM_SRC="yarn.lock"
+  elif [[ -f package-lock.json ]]; then NODE_PM=npm;  NODE_PM_SRC="package-lock.json"
+  elif [[ -f bun.lockb         ]]; then NODE_PM=bun;  NODE_PM_SRC="bun.lockb"
+  elif command -v npm >/dev/null 2>&1; then NODE_PM=npm; NODE_PM_SRC="no lockfile — defaulted"
+  else NODE_PM=""; NODE_PM_SRC="none available"
+  fi
+}
+
+# Does package.json declare this script? Uses node so a `scripts` key that is
+# absent, null, or malformed answers "no" instead of crashing the pipeline.
+node_has_script() {
+  node -e 'try{const s=(require("./package.json").scripts)||{};process.exit(s[process.argv[1]]?0:1)}catch(e){process.exit(1)}' "$1" 2>/dev/null
+}
+
+# First declared script from a preference-ordered candidate list; empty if none.
+node_pick_script() {
+  local c
+  for c in "$@"; do
+    if node_has_script "$c"; then printf '%s' "$c"; return 0; fi
+  done
+  printf ''
+}
+
 # ── Tech stack detection ──────────────────────────────────────────────────────
 
 if [[ -f "artisan" ]]; then
@@ -663,9 +724,57 @@ case "$STACK" in
     run_step "test" laravel_test
     ;;
   vue|node)
-    run_step "lint_fix"  yarn lint:fix
-    run_step "build"     yarn build
-    run_step "test_unit" yarn test:unit
+    node_resolve_pm
+    if [[ -z "$NODE_PM" ]]; then
+      echo "❌ runner (0s)"
+      echo "No package manager available: no pnpm/yarn/npm/bun lockfile and npm is not on PATH."
+      echo ""
+      echo "## Overall: ❌ FAIL"
+      echo "PRECOMMIT_STATUS=FAIL"
+      echo "PRECOMMIT_MODE=${STACK}"
+      write_receipt FAIL
+      exit 1
+    fi
+
+    NODE_LINT=$(node_pick_script lint:fix lint typecheck type-check)
+    NODE_BUILD=$(node_pick_script build)
+    NODE_TEST=$(node_pick_script test:unit test)
+
+    # Printed before the steps, not inside them: run_step swallows a passing
+    # step's output, and "build passed" without naming the script that ran is
+    # the same claim as "something ran somewhere".
+    echo "Runner: ${NODE_PM} (from ${NODE_PM_SRC})"
+    echo "Scripts: lint=${NODE_LINT:-(none declared)} build=${NODE_BUILD:-(none declared)} test=${NODE_TEST:-(none declared)}"
+    echo ""
+
+    # Neither build nor test declared → degrade to generic mode, do NOT FAIL.
+    #
+    # A FAIL here would be permanent: nothing the agent can do to a repo whose
+    # package.json simply has no test script clears it, so stop-guard would
+    # refuse every stop forever. That is the exact pressure behind the
+    # 2026-08-21 incident — /precommit returned FAIL, the stop was refused, and
+    # the agent wrote its own precommit script into the repo to get past the
+    # gate. Generic mode is the honest floor: it states out loud that nothing
+    # was built and nothing was tested, so the PASS cannot be misread.
+    if [[ -z "$NODE_BUILD" && -z "$NODE_TEST" ]]; then
+      echo "⚠️  package.json declares neither a build nor a test script, so this"
+      echo "    mode has nothing to run. Generic checks only — see the note above"
+      echo "    PASS. If the project does have a pipeline under other script"
+      echo "    names, give it a tracked .claude/commands/precommit.sh."
+      echo ""
+      # Receipt mode follows what actually ran, not what was detected: recording
+      # mode=node for a run that built and tested nothing would be the same lie
+      # as a hardcoded install summary.
+      STACK="generic"
+      generic_steps
+    else
+      # `if` blocks rather than `[[ … ]] && run_step …`: the && form leaves a
+      # non-zero status behind when the guard is false, which under `set -o
+      # pipefail` is a trap waiting for the next person who adds `set -e`.
+      if [[ -n "$NODE_LINT" ]];  then run_step "lint (${NODE_LINT})"   "$NODE_PM" run "$NODE_LINT";  fi
+      if [[ -n "$NODE_BUILD" ]]; then run_step "build (${NODE_BUILD})" "$NODE_PM" run "$NODE_BUILD"; fi
+      if [[ -n "$NODE_TEST" ]];  then run_step "test (${NODE_TEST})"   "$NODE_PM" run "$NODE_TEST";  fi
+    fi
     ;;
   shell)
     # Printed before the step, not inside it: run_step swallows a passing step's
@@ -679,12 +788,7 @@ case "$STACK" in
   generic)
     echo "⚠️  This repo has no build or test pipeline: nothing was built and no"
     echo "    tests were run. Generic checks only — see the note above PASS."
-    generic_collect
-    echo "Pending files inspected: ${#GENERIC_FILES[@]}"
-    echo ""
-    run_step "conflict_markers" generic_conflict_markers
-    run_step "file_syntax"      generic_syntax
-    run_step "secret_scan"      generic_secret_scan
+    generic_steps
     ;;
 esac
 
