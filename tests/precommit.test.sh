@@ -406,5 +406,85 @@ for g in claude codex agy; do
   fi
 done
 
+# ── Node mode: the runner and the script names come from the repo ─────────────
+#
+# Added 2026-08-26. The node/vue branch had NO coverage, which is how three
+# hardcoded `yarn …` lines survived: on an npm-only repo /precommit died at
+# second zero with "yarn: command not found", and on a repo whose script is
+# named `test` (not `test:unit`) it died on a missing script. Both wrote FAIL to
+# the receipt, so stop-guard refused the stop — for a tree nothing had examined.
+# These assert the rule, not the current spelling: the runner is *detected*, and
+# only *declared* scripts run.
+
+node_repo() {          # $1 = fixture name, $2 = lockfile, $3 = scripts JSON body
+  local d; d=$(new_repo "$1")
+  printf '{"name":"fixture","scripts":{%s}}\n' "$3" > "$d/package.json"
+  [ -n "$2" ] && printf '{}\n' > "$d/$2"
+  printf '%s' "$d"
+}
+
+# npm-only repo, scripts named `build`/`test` — the exact shape that used to die.
+D=$(node_repo node-npm package-lock.json '"build":"true","test":"true"')
+run_precommit "$D"
+[ "$RC" -eq 0 ] && ok || bad "npm repo should pass, got $RC: $OUT"
+grep -Fq 'PRECOMMIT_MODE=node' <<< "$OUT" && ok || bad "npm repo: mode should be node"
+grep -Fq 'Runner: npm (from package-lock.json)' <<< "$OUT" && ok \
+  || bad "npm repo must name the runner and where it was detected: $OUT"
+grep -Fq 'yarn' <<< "$OUT" && bad "npm repo must not mention yarn: $OUT" || ok
+# The step labels carry the script name: a PASS that does not say what ran is
+# the same claim as "something ran somewhere".
+grep -Eq '✅ build \(build\)' <<< "$OUT" && ok || bad "build step should name its script: $OUT"
+grep -Eq '✅ test \(test\)'   <<< "$OUT" && ok || bad "test step should name its script: $OUT"
+
+# `lint:fix` absent, `typecheck` present → the fallback ladder is used, not skipped.
+D=$(node_repo node-typecheck package-lock.json '"typecheck":"true","build":"true","test":"true"')
+run_precommit "$D"
+[ "$RC" -eq 0 ] && ok || bad "typecheck fallback should pass, got $RC: $OUT"
+grep -Eq '✅ lint \(typecheck\)' <<< "$OUT" && ok \
+  || bad "with no lint:fix/lint, typecheck should serve as the lint step: $OUT"
+
+# No lint-shaped script at all → the other two still gate, and the header says so.
+D=$(node_repo node-nolint package-lock.json '"build":"true","test":"true"')
+run_precommit "$D"
+[ "$RC" -eq 0 ] && ok || bad "missing lint script should not fail the run: $OUT"
+grep -Fq 'lint=(none declared)' <<< "$OUT" && ok \
+  || bad "a script that does not exist must be reported, not silently dropped: $OUT"
+
+# Neither build nor test → degrade to generic, NOT a FAIL. A FAIL here is
+# unclearable (no edit to the repo makes a missing test script appear), so
+# stop-guard would refuse every stop forever — the 2026-08-21 trap. What the run
+# must NOT do is claim a node-mode PASS for a tree it never built or tested.
+D=$(node_repo node-nogate package-lock.json '"lint":"true"')
+run_precommit "$D"
+[ "$RC" -eq 0 ] && ok || bad "no-gate repo must not be an unclearable FAIL: $OUT"
+grep -Fq 'PRECOMMIT_MODE=generic' <<< "$OUT" && ok \
+  || bad "a run that built and tested nothing must record mode=generic, not node: $OUT"
+grep -Fq 'no build ran, no tests ran' <<< "$OUT" && ok \
+  || bad "no-gate PASS must state that nothing was built or tested: $OUT"
+grep -Fq 'declares neither a build nor a test script' <<< "$OUT" && ok \
+  || bad "no-gate repo must say why it fell back: $OUT"
+[ "$(receipt_field "$D" mode)" = generic ] && ok \
+  || bad "no-gate repo: receipt mode should be generic, got $(receipt_field "$D" mode)"
+# The lint script it *does* declare must not be silently promoted into a PASS
+# that looks like a real gate.
+grep -Eq '✅ lint' <<< "$OUT" && bad "no-gate repo should not run lint as if it gated: $OUT" || ok
+grep -Fq '✅ secret_scan' <<< "$OUT" && ok || bad "no-gate repo should run the generic checks: $OUT"
+
+# Lockfile drives the choice — asserted on the header, which is printed before
+# any step, so this holds whether or not yarn is installed on this machine.
+D=$(node_repo node-yarn yarn.lock '"build":"true","test":"true"')
+run_precommit "$D"
+grep -Fq 'Runner: yarn (from yarn.lock)' <<< "$OUT" && ok \
+  || bad "yarn.lock should select yarn: $OUT"
+
+# vite.config.* → stack is vue, but the same resolution applies.
+D=$(node_repo node-vite package-lock.json '"build":"true","test:unit":"true"')
+printf 'export default {}\n' > "$D/vite.config.ts"
+run_precommit "$D"
+[ "$RC" -eq 0 ] && ok || bad "vue repo should pass, got $RC: $OUT"
+grep -Fq 'PRECOMMIT_MODE=vue' <<< "$OUT" && ok || bad "vite.config.ts should detect vue"
+grep -Eq '✅ test \(test:unit\)' <<< "$OUT" && ok \
+  || bad "test:unit should win over test when both could apply: $OUT"
+
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]
