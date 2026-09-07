@@ -111,20 +111,35 @@ expect_decision "stop-guard: edits on clean file not in git status → allow" \
   hooks/agy/stop-guard.sh "$(stop_payload "$TRANSCRIPT_EDITED_CLEAN_FILE")" allow "$REPO"
 
 # ── grounding-guard (PreToolUse) ──────────────────────────────────────────────
+#
+# Target paths must sit INSIDE $REPO. grounding-guard now exempts writes it can
+# prove cannot reach the branch's diff — inside .git/, or outside the working
+# tree — exactly as branch-guard already does (see the adapter section below),
+# so the old fictional "/x/a.php" is now correctly allowed and would stop
+# testing the deny path. agy sends an absolute path inside the workspace anyway.
+#
+# Args are built with jq, never as a hand-escaped literal: pretool_payload feeds
+# them to `--argjson`, so one mis-escaped quote becomes an unparsable payload and
+# the guard fails OPEN — which reads exactly like the assertion failing.
+GG_ARGS_A=$(jq -cn --arg p "$REPO/a.php" '{TargetFile:$p,CodeContent:"x",Overwrite:false}')
+GG_ARGS_B=$(jq -cn --arg p "$REPO/b.php" '{TargetFile:$p,CodeContent:"x"}')
+GG_ARGS_MD=$(jq -cn --arg p "$REPO/README.md" '{TargetFile:$p,CodeContent:"x"}')
+GG_ARGS_C=$(jq -cn --arg p "$REPO/c.php" \
+  '{TargetFile:$p,StartLine:1,EndLine:2,TargetContent:"a",ReplacementContent:"b"}')
 
 expect_decision "grounding-guard: first code edit, no grounding → deny" \
   hooks/agy/grounding-guard.sh \
-  "$(pretool_payload write_to_file '{"TargetFile":"/x/a.php","CodeContent":"x","Overwrite":false}' "$TRANSCRIPT_CLEAN")" \
+  "$(pretool_payload write_to_file "$GG_ARGS_A" "$TRANSCRIPT_CLEAN")" \
   deny "$REPO"
 
 expect_decision "grounding-guard: GROUNDING_STATUS=PASS present → allow" \
   hooks/agy/grounding-guard.sh \
-  "$(pretool_payload write_to_file '{"TargetFile":"/x/b.php","CodeContent":"x"}' "$TRANSCRIPT_GROUNDED")" \
+  "$(pretool_payload write_to_file "$GG_ARGS_B" "$TRANSCRIPT_GROUNDED")" \
   allow "$REPO"
 
 expect_decision "grounding-guard: markdown edit → allow" \
   hooks/agy/grounding-guard.sh \
-  "$(pretool_payload write_to_file '{"TargetFile":"/x/README.md","CodeContent":"x"}' "$TRANSCRIPT_CLEAN")" \
+  "$(pretool_payload write_to_file "$GG_ARGS_MD" "$TRANSCRIPT_CLEAN")" \
   allow "$REPO"
 
 # The gate only fires on the FIRST non-doc edit per conversation, and the case
@@ -132,7 +147,7 @@ expect_decision "grounding-guard: markdown edit → allow" \
 cleanup_markers
 expect_decision "grounding-guard: replace_file_content also gated (TargetFile arg)" \
   hooks/agy/grounding-guard.sh \
-  "$(pretool_payload replace_file_content '{"TargetFile":"/x/c.php","StartLine":1,"EndLine":2,"TargetContent":"a","ReplacementContent":"b"}' "$TRANSCRIPT_CLEAN")" \
+  "$(pretool_payload replace_file_content "$GG_ARGS_C" "$TRANSCRIPT_CLEAN")" \
   deny "$REPO"
 
 expect_decision "grounding-guard: unrelated tool → allow" \
