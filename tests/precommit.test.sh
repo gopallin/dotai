@@ -406,6 +406,84 @@ for g in claude codex agy; do
   fi
 done
 
+# ── Stale-receipt delta: the manifest, and what the guard says about it ───────
+#
+# Same parity argument as the fingerprint, one level down. The manifest is what
+# lets the guard name the files that moved after a PASS; if precommit.sh writes
+# one shape and a guard reads another, the delta silently reports every file as
+# changed — misleading rather than blocking, so a textual lock is the cheap fix.
+
+extract_fn() {   # $1 = file, $2 = function name
+  sed -n "/^$2()/,/^}/p" "$1" | sed 's/#.*//' | tr -d ' \t' | sed '/^$/d'
+}
+
+MREF=$(extract_fn "$PRECOMMIT" precommit_file_manifest)
+[ -n "$MREF" ] && ok || bad "could not extract precommit_file_manifest() from precommit.sh"
+for g in claude codex agy; do
+  if [ "$(extract_fn "$ROOT/hooks/$g/stop-guard.sh" precommit_file_manifest)" = "$MREF" ]; then
+    ok
+  else
+    bad "$g/stop-guard.sh precommit_file_manifest() drifted from precommit.sh"
+  fi
+done
+
+DREF=$(extract_fn "$ROOT/hooks/claude/stop-guard.sh" receipt_delta_report)
+[ -n "$DREF" ] && ok || bad "could not extract receipt_delta_report() from claude/stop-guard.sh"
+for g in codex agy; do
+  if [ "$(extract_fn "$ROOT/hooks/$g/stop-guard.sh" receipt_delta_report)" = "$DREF" ]; then
+    ok
+  else
+    bad "$g/stop-guard.sh receipt_delta_report() drifted from claude's"
+  fi
+done
+
+# The receipt has to carry the fields the report is built from. Asserting the
+# fields, not their values: `session` may legitimately be `unknown` off-CLI.
+D=$(new_repo receipt-fields)
+printf '#!/bin/bash\necho v1\n' > "$D/app.sh"
+run_precommit "$D"
+R="$D/.git/dotai-precommit"
+grep -q '^ts='      "$R" && ok || bad "receipt must record ts="
+grep -q '^session=' "$R" && ok || bad "receipt must record session="
+grep -q '^branch='  "$R" && ok || bad "receipt must record branch="
+grep -qE '^file=[0-9a-f]{64}'$'\t''app\.sh$' "$R" && ok \
+  || bad "receipt must carry a per-file manifest line for app.sh: $(cat "$R")"
+
+# A blocked stop must NAME what moved. "Run /precommit again" with no delta is
+# what forced blind full re-runs; the delta is the whole point of the manifest.
+guard_stderr() {   # $1 = repo dir → echoes the guard's stderr
+  local d="$1" transcript="$1/.transcript.jsonl"
+  jq -cn --arg p "$d/app.sh" \
+    '{type:"assistant",message:{content:[{type:"tool_use",name:"Write",input:{file_path:$p}}]}}' \
+    > "$transcript"
+  (cd "$d" && jq -cn --arg t "$transcript" \
+      '{transcript_path:$t,session_id:"other-session",stop_hook_active:true}' \
+    | bash "$STOP_GUARD" 2>&1 >/dev/null)
+}
+
+printf '#!/bin/bash\necho v2\n' > "$D/app.sh"     # edit AFTER the PASS
+printf 'late\n' > "$D/added-late.sh"              # and add a file
+OUT_D=$(guard_stderr "$D")
+grep -Fq 'M app.sh'        <<< "$OUT_D" && ok || bad "delta must name the modified file: $OUT_D"
+grep -Fq '+ added-late.sh' <<< "$OUT_D" && ok || bad "delta must name the added file: $OUT_D"
+grep -Fq 'DIFFERENT session' <<< "$OUT_D" && ok \
+  || bad "a receipt from another session must be flagged as such: $OUT_D"
+
+# Provenance must stay quiet when the session matches — a warning that fires
+# every time teaches the reader to ignore it.
+SID=$(sed -n 's/^session=//p' "$R" | head -1)
+OUT_S=$( (cd "$D" && jq -cn --arg t "$D/.transcript.jsonl" --arg s "$SID" \
+            '{transcript_path:$t,session_id:$s,stop_hook_active:true}' \
+          | bash "$STOP_GUARD" 2>&1 >/dev/null) )
+grep -Fq 'DIFFERENT session' <<< "$OUT_S" && bad "same session must not be flagged: $OUT_S" || ok
+
+# Receipts written before the manifest existed must say so rather than report an
+# empty delta, which would read as "nothing changed" while the gate blocks.
+grep -v '^file=' "$R" > "$R.tmp" && mv "$R.tmp" "$R"
+OUT_OLD=$(guard_stderr "$D")
+grep -Fq 'predates the file manifest' <<< "$OUT_OLD" && ok \
+  || bad "a manifest-less receipt must say the files cannot be named: $OUT_OLD"
+
 # ── Node mode: the runner and the script names come from the repo ─────────────
 #
 # Added 2026-08-26. The node/vue branch had NO coverage, which is how three

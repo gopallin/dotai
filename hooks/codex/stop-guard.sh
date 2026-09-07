@@ -110,6 +110,102 @@ if [[ -n "$REPO_ROOT" ]]; then
   fi
 fi
 
+# ── Stale-receipt reporting ───────────────────────────────────────────────────
+#
+# Both functions below answer "WHAT moved?", never "may I stop?" — the decision
+# rests on the fingerprint alone. They are reporting only, so a bug in them
+# cannot open the gate.
+#
+# ⚠️ precommit_file_manifest() must stay identical to the copy in
+# commands/precommit.sh, and receipt_delta_report() identical across all three
+# stop-guard.sh files. tests/precommit.test.sh compares all four textually.
+precommit_file_manifest() {
+  git status --porcelain -uall 2>/dev/null \
+    | sed 's/^.\{3\}//' | sed 's/.* -> //' \
+    | while IFS= read -r p; do
+        [ -n "$p" ] || continue
+        if [ -f "$p" ]; then
+          printf 'file=%s\t%s\n' "$(shasum -a 256 "$p" 2>/dev/null | cut -d' ' -f1)" "$p"
+        else
+          printf 'file=%s\t%s\n' "deleted" "$p"
+        fi
+      done
+}
+
+receipt_delta_report() {   # $1 = receipt path, $2 = this session's id (may be empty)
+  local receipt="$1" this_session="$2"
+  local ts session branch age when before after p b a changed added gone
+
+  ts=$(sed -n 's/^ts=//p' "$receipt" | head -1)
+  session=$(sed -n 's/^session=//p' "$receipt" | head -1)
+  branch=$(sed -n 's/^branch=//p' "$receipt" | head -1)
+
+  if [ -n "$ts" ]; then
+    age=$(( $(date +%s) - ts ))
+    # BSD date takes -r <epoch>; GNU date reads -r as "mtime of file" and wants
+    # -d @<epoch>. Try both, then fall back to the raw epoch rather than
+    # printing an empty timestamp.
+    when=$(date -r "$ts" '+%H:%M:%S' 2>/dev/null \
+        || date -d "@$ts" '+%H:%M:%S' 2>/dev/null \
+        || echo "epoch ${ts}")
+    echo "That PASS was recorded ${when} (${age}s ago)${branch:+ on ${branch}}."
+  fi
+
+  # Provenance only when BOTH ids are known and differ. A receipt written before
+  # this field existed, or by a hand-run pipeline, says `unknown` — guessing
+  # from that is worse than staying quiet.
+  if [ -n "$session" ] && [ "$session" != "unknown" ] \
+     && [ -n "$this_session" ] && [ "$session" != "$this_session" ]; then
+    echo "⚠️  It was earned by a DIFFERENT session (${session}) — another session is"
+    echo "    working in this repo, so the changes below may not be yours."
+  fi
+
+  # Receipts written before the manifest existed: say so, rather than reporting
+  # an empty delta that would read as "nothing changed" while the gate blocks.
+  if ! grep -q '^file=' "$receipt" 2>/dev/null; then
+    echo "(This receipt predates the file manifest, so the changed files cannot be named.)"
+    return 0
+  fi
+
+  before=$(sed -n 's/^file=//p' "$receipt" | sort)
+  after=$(precommit_file_manifest | sed -n 's/^file=//p' | sort)
+
+  # Keyed on path, then compared on hash, so a modified file is reported once as
+  # "changed" instead of twice as gone-and-reappeared.
+  hash_of() { printf '%s\n' "$2" | awk -F'\t' -v p="$1" '$2==p {print $1; exit}'; }
+
+  changed=""; added=""; gone=""
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    b=$(hash_of "$p" "$before"); a=$(hash_of "$p" "$after")
+    if [ -z "$b" ]; then
+      added="${added}  + ${p}
+"
+    elif [ "$a" != "$b" ]; then
+      changed="${changed}  M ${p}
+"
+    fi
+  done <<< "$(printf '%s\n' "$after" | cut -f2- | sort -u)"
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    if [ -z "$(hash_of "$p" "$after")" ]; then
+      gone="${gone}  - ${p}
+"
+    fi
+  done <<< "$(printf '%s\n' "$before" | cut -f2- | sort -u)"
+
+  if [ -z "${changed}${added}${gone}" ]; then
+    # Every pending path and content matches, yet the fingerprint differs — so
+    # what moved is something the manifest does not cover: HEAD (a commit,
+    # amend, reset, or checkout) or the staged-vs-worktree split.
+    echo "No pending file's content differs — so HEAD or the index moved"
+    echo "(a commit, amend, reset, or branch switch since that PASS)."
+  else
+    echo "Changed since that PASS:"
+    printf '%s' "${changed}${added}${gone}"
+  fi
+}
+
 # ── Layer 2: Did /precommit actually run, and pass, on THIS tree? ─────────────
 # We check the receipt.
 GIT_DIR=$(git rev-parse --git-dir 2>/dev/null || echo "")
@@ -134,12 +230,37 @@ if [[ -n "$GIT_DIR" ]]; then
       echo '{"decision": "allow"}'
       exit 0
     fi
+
+    # PASS, but on a different tree. The block still happens below; this
+    # only collects WHAT moved, because "run it again" with no delta forces
+    # a blind full re-run. This CLI shows the model a `reason` string and
+    # never stderr, so the report has to travel in there.
+    if [[ "$RECEIPT_STATUS" == "PASS" ]]; then
+      THIS_SESSION=$(printf '%s' "$INPUT" | jq -r '.session_id // .conversationId // empty' 2>/dev/null)
+      THIS_SESSION="${THIS_SESSION:-${CODEX_SESSION_ID:-}}"
+      STALE_REPORT=$(receipt_delta_report "$RECEIPT" "$THIS_SESSION")
+    fi
   fi
 fi
 
-# Fallback: check transcript for PRECOMMIT_STATUS=PASS
-if grep -q 'PRECOMMIT_STATUS=PASS' "$TRANSCRIPT" 2>/dev/null; then
+# Fallback: check transcript for PRECOMMIT_STATUS=PASS.
+#
+# Skipped when the receipt already proved a stale PASS: the transcript of any
+# session that ran the pipeline contains that line forever, so honouring it
+# here would allow every stale stop and make the report below dead code.
+if [[ -z "${STALE_REPORT:-}" ]] && grep -q 'PRECOMMIT_STATUS=PASS' "$TRANSCRIPT" 2>/dev/null; then
   echo '{"decision": "allow"}'
+  exit 0
+fi
+
+if [[ -n "${STALE_REPORT:-}" ]]; then
+  _reason="/precommit passed, but the working tree changed afterwards, so that
+PASS does not cover the current tree.
+
+${STALE_REPORT}
+
+Run /precommit again."
+  jq -cn --arg r "$_reason" '{decision:"block",reason:$r}'
   exit 0
 fi
 
