@@ -54,6 +54,9 @@ echo "✅ /handoff command   → $CLAUDE_DIR/commands/handoff.md"
 cp "$DOTAI_DIR/commands/prompt.md" "$CLAUDE_DIR/commands/prompt.md"
 echo "✅ /prompt command    → $CLAUDE_DIR/commands/prompt.md"
 
+cp "$DOTAI_DIR/commands/incident.md" "$CLAUDE_DIR/commands/incident.md"
+echo "✅ /incident command  → $CLAUDE_DIR/commands/incident.md"
+
 cp "$DOTAI_DIR/commands/prompt-template.sh" "$CLAUDE_DIR/commands/prompt-template.sh"
 chmod +x "$CLAUDE_DIR/commands/prompt-template.sh"
 echo "✅ /prompt template   → $CLAUDE_DIR/commands/prompt-template.sh"

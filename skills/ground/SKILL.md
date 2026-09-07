@@ -14,6 +14,8 @@ of failure:
 - `wrong_approach` (acting before reading existing patterns)
 - `misunderstood_request` (building the wrong thing)
 - `buggy_code` (writing against unverified data — wrong `factory_id`, `NULL` `design_id`, misread values)
+- `excessive_changes` (building more than was asked — Step 5.5's `scope_files:`
+  contract is enforced on every edit, not just the first)
 
 It mirrors the `/precommit` + `stop-guard` pair, but at the **front** of the work:
 `grounding-guard.sh` blocks the first non-doc code edit of a session until this
@@ -130,17 +132,54 @@ memory.
 List the assumptions you are making and your confidence. If confidence is below 100%,
 name the gaps explicitly (per Confidence-Driven Response Validation).
 
+### Step 5.5 — Declare the blast radius (guards `excessive_changes`)
+
+Name **every file you intend to create or modify**, one `scope_files:` line each.
+This is a contract, not a wish: `grounding-guard.sh` checks *every* code edit for
+the rest of the session against this list and blocks anything outside it.
+
+Why this step exists: scope creep is the most expensive recurring failure in the
+usage data — an override implemented twice in two layers, a redundant admin page
+that had to be merged back, and one session abandoned outright because the
+proposed scope had quietly grown to include frontend files. Deciding the radius
+*before* writing turns those correction rounds into one visible declaration.
+
+**Matching rules** (bash pattern semantics — the guard uses `[[ path == pat ]]`):
+
+| Declaration | Matches |
+|---|---|
+| `app/Services/LabelService.php` | exactly that file |
+| `app/Services/*.php` | any `.php` under `app/Services` — note `*` also crosses `/`, so nested dirs match too |
+| `resources/js/` or `resources/js/**` | the whole subtree |
+
+Include the **tests** you will add, and any migration/seed files. Exempt without
+declaring: `*.md`, `*/.claudedocs/*`, anything under `.git/`, and paths outside
+the repo — none of them can enter this branch's diff.
+
+**Widening it later is allowed, and must be loud.** If the work genuinely needs a
+file you did not declare, say why in one line and emit a new `scope_files:` line
+for it, then retry the edit. The guard re-reads the transcript on every refusal,
+so the amendment takes effect immediately. What it will not let you do is grow
+the radius *silently* — which is the actual failure mode.
+
+If the change really is confined to one file, declare that one file. A
+declaration of `**` is not a scope; it is an opt-out, and it shows up as one on
+review.
+
 ### Step 6 — Emit the machine-readable marker
 
 End your grounding output with **exactly one** of these lines, on its own line, so
 `grounding-guard.sh` can detect it:
 
-**Pass** (you completed Steps 1–5) — include the evidence lines first:
+**Pass** (you completed Steps 1–5.5) — include the evidence and scope lines first:
 
 ```
 reference_file: app/Services/ReplenishmentService.php
 reference_file: app/Services/ShippingService.php
 verified_data: factory_id=4, design_id=181 (confirmed via DB, design_id NOT NULL)
+scope_files: app/Services/ReplenishmentService.php
+scope_files: database/migrations/2026_09_07_add_reorder_point.php
+scope_files: tests/Feature/ReplenishmentTest.php
 GROUNDING_STATUS=PASS
 ```
 
@@ -154,20 +193,35 @@ GROUNDING_STATUS=SKIP reason=single-line typo fix in error message, no logic/dat
 > The `reason=` is logged by the hook. Overusing `SKIP` defeats the gate and shows up
 > in the skip log as a quality signal — only use it for genuinely trivial edits.
 
-## Marker Contract (read by `hooks/claude/grounding-guard.sh`)
+## Marker Contract (read by `grounding-guard.sh` on all three CLIs)
 
-- `GROUNDING_STATUS=PASS` — first non-doc code edit of the session is allowed.
-- `GROUNDING_STATUS=SKIP reason=<text>` — allowed, and `<text>` is appended to the skip log.
-- Absent — the hook blocks the first code edit with `exit 2`.
-- The gate only checks the **first** non-`.md` code edit per session; later edits are
-  trusted (a deliberate cost/friction tradeoff — see `plan-grounding-guard.md` §4 #1).
+- `GROUNDING_STATUS=PASS` — first non-doc code edit of the session is allowed,
+  and the `scope_files:` lines emitted with it become the session's contract.
+- `scope_files: <path-or-glob>` — one per line. Enforced on **every** code edit
+  for the rest of the session, including the first. A later line widens the
+  contract; nothing narrows it.
+- `GROUNDING_STATUS=SKIP reason=<text>` — allowed, and `<text>` is appended to the
+  skip log. A SKIP declares no scope, so nothing is enforced afterwards.
+- Absent — the hook blocks the first code edit (Claude/Codex `exit 2`; agy
+  `{"decision":"deny"}`).
+- **Gate 1** (grounding) only checks the **first** non-`.md` code edit per session
+  — a deliberate cost/friction tradeoff, see `plan-grounding-guard.md` §4 #1.
+  **Gate 2** (scope) checks every edit, because that is where creep happens.
+- Bash writes (`echo >`, `sed -i`) bypass both gates: the hook is not registered
+  for Bash on any CLI.
 
 ## Honesty Note
 
-This gate cannot fully prevent a fabricated `PASS` (emitting the marker without doing
-the work) — exactly like `PRECOMMIT_STATUS=PASS`. The evidence lines (`reference_file:`,
-`verified_data:`) exist to make a real pass cheap and a fake pass obvious on review.
-Grounding is for your own correctness, not to satisfy the hook.
+Neither gate can be made airtight, and pretending otherwise would be the wrong
+claim to make. A fabricated `PASS` is possible (exactly like
+`PRECOMMIT_STATUS=PASS`), and so is a self-widened scope — the agent can print
+another `scope_files:` line and retry.
+
+That is by design. The point is not to make scope growth impossible; it is to
+make it **explicit and reviewable** instead of silent. The evidence lines
+(`reference_file:`, `verified_data:`) and the declaration (`scope_files:`) exist
+to make an honest pass cheap and a dishonest one obvious on review. Grounding is
+for your own correctness, not to satisfy the hook.
 
 ## Integration with Other Skills
 

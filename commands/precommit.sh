@@ -80,9 +80,46 @@ precommit_tree_fingerprint() {
   } | shasum -a 256 | cut -d' ' -f1
 }
 
+# Per-file view of the same pending set the fingerprint covers.
+#
+# Why both: the fingerprint answers "did anything change?" in one comparison,
+# which is all the gate needs to decide. It cannot answer "WHAT changed?", and
+# that is the question the human gets asked when the gate fires. A stop blocked
+# with "the working tree changed afterwards. Run /precommit again." forces a
+# blind full re-run — twice observed in the usage report — because nothing in
+# the receipt distinguishes "you edited one line of a comment" from "another
+# session rewrote four files under your feet".
+#
+# Deleted paths hash to the literal `deleted` rather than being skipped: a file
+# present at PASS and gone afterwards has to register as a change.
+#
+# ⚠️ Recomputed by an identical block in all three stop-guard.sh files, and
+# compared textually by tests/precommit.test.sh — same locking as the
+# fingerprint above, and the same reason for duplicating instead of sourcing.
+precommit_file_manifest() {
+  git status --porcelain -uall 2>/dev/null \
+    | sed 's/^.\{3\}//' | sed 's/.* -> //' \
+    | while IFS= read -r p; do
+        [ -n "$p" ] || continue
+        if [ -f "$p" ]; then
+          printf 'file=%s\t%s\n' "$(shasum -a 256 "$p" 2>/dev/null | cut -d' ' -f1)" "$p"
+        else
+          printf 'file=%s\t%s\n' "deleted" "$p"
+        fi
+      done
+}
+
 # Written to the git dir (not the worktree): never committed, per-clone, and
 # `git rev-parse --git-dir` resolves correctly inside linked worktrees, which a
 # hardcoded "$REPO_ROOT/.git" does not.
+#
+# `session=` is best-effort provenance for the multi-clauding case: two sessions
+# in one repo invalidate each other's PASS, and until now the block message gave
+# the reader no way to tell whose edit moved the tree. Claude Code exports
+# CLAUDE_CODE_SESSION_ID to Bash tool calls (verified 2026-09-07); the older
+# spelling CLAUDE_SESSION_ID is NOT set and is kept only as a fallback. Absent
+# entirely (a hand-run pipeline, or another CLI) it records `unknown`, and
+# stop-guard then simply omits the provenance line rather than guessing.
 write_receipt() {
   local status="$1" mode="${2:-${STACK:-unknown}}" gitdir
   gitdir=$(git rev-parse --git-dir 2>/dev/null) || return 0  # not a repo — nothing to gate
@@ -91,6 +128,9 @@ write_receipt() {
     echo "mode=${mode}"
     echo "tree=$(precommit_tree_fingerprint)"
     echo "ts=$(date +%s)"
+    echo "session=${CLAUDE_CODE_SESSION_ID:-${CLAUDE_SESSION_ID:-${DOTAI_SESSION_ID:-unknown}}}"
+    echo "branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+    precommit_file_manifest
   } > "${gitdir}/dotai-precommit"
 }
 

@@ -2,6 +2,12 @@
 
 # Verifies all three installers lay skills out as <root>/<name>/SKILL.md.
 # All three CLIs share that convention; a flat <root>/<name>.md is never discovered.
+#
+# It also pins where each installer puts COMMANDS, since the three roots differ
+# and a command written to the wrong one is silently never found: Claude reads
+# ~/.claude/commands/, Codex reads ~/.codex/prompts/ (invoked /prompts:<name>),
+# and agy has no commands concept at all, so they ship there as skills. Both
+# lists are derived from the repo, so adding a command needs no edit here.
 
 set -euo pipefail
 
@@ -80,6 +86,24 @@ assert_skills_root claude "$TEST_HOME/.claude/skills" "${SKILLS[@]}"
 assert_skills_root codex  "$TEST_HOME/.codex/skills"  "${SKILLS[@]}"
 # agy's global customization root is ~/.gemini/config/, not ~/.gemini/.
 assert_skills_root agy    "$TEST_HOME/.gemini/config/skills" "${SKILLS[@]}" "${AGY_COMMANDS[@]}"
+
+# Commands: same "landed where the CLI actually reads it" check as skills.
+# Derived from commands/*.md, so a new command is covered without editing this.
+for c in "${AGY_COMMANDS[@]}"; do
+  [ -f "$TEST_HOME/.claude/commands/$c.md" ] || {
+    echo "❌ claude: missing $TEST_HOME/.claude/commands/$c.md" >&2
+    exit 1
+  }
+  # Codex has no commands/ — its slash prompts live in prompts/ instead.
+  [ -f "$TEST_HOME/.codex/prompts/$c.md" ] || {
+    echo "❌ codex: missing $TEST_HOME/.codex/prompts/$c.md (Codex reads prompts/, not commands/)" >&2
+    exit 1
+  }
+  [ ! -e "$TEST_HOME/.codex/commands/$c.md" ] || {
+    echo "❌ codex: $c.md written to commands/, which Codex never reads" >&2
+    exit 1
+  }
+done
 
 for legacy in "$TEST_HOME/.gemini/skills" "$TEST_HOME/.gemini/commands"; do
   [ ! -e "$legacy" ] || {

@@ -70,7 +70,7 @@ echo "✅ TUI status line    → $CONFIG_FILE"
 # ── 3. Commands (Codex custom prompts: ~/.codex/prompts/*.md → /name) ─────────
 
 mkdir -p "$CODEX_DIR/prompts"
-for cmd in precommit plan map next-ticket handoff prompt; do
+for cmd in precommit plan map next-ticket handoff prompt incident; do
   cp "$DOTAI_DIR/commands/$cmd.md" "$CODEX_DIR/prompts/$cmd.md"
 done
 
@@ -87,7 +87,7 @@ chmod +x "$CODEX_DIR/prompts/precommit.sh"
 cp "$DOTAI_DIR/commands/prompt-template.sh" "$CODEX_DIR/prompts/prompt-template.sh"
 chmod +x "$CODEX_DIR/prompts/prompt-template.sh"
 
-for cmd in precommit plan map next-ticket handoff prompt; do
+for cmd in precommit plan map next-ticket handoff prompt incident; do
   echo "✅ /$cmd prompt → $CODEX_DIR/prompts/$cmd.md"
 done
 echo "✅ /precommit script  → $CODEX_DIR/prompts/precommit.sh"
