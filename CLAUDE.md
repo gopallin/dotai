@@ -205,10 +205,11 @@ Ran but FAIL? Still cannot stop.
 │   ├── next-ticket.md          ← /next-ticket pick up next unblocked ticket (one slice per session)
 │   ├── handoff.md              ← /handoff compact resume file before /clear (local-only, git-ignored)
 │   ├── prompt.md               ← /prompt guided wizard: collects type/goal/files/scope/done-when, builds AI-ready task prompt via prompt-template.sh
+│   ├── incident.md             ← /incident evidence-first root cause: UTC-normalise every source, ≥3 hypotheses each with a kill test, verify the fix is deployed, reproduce with a failing test before repairing
 │   └── prompt-template.sh      ← shell template emitter for /prompt (feature|bugfix|refactor skeletons; kept out of .md to avoid loading all templates into context)
 ├── skills/                     ← one dir per skill; all three CLIs require <name>/SKILL.md
 │   ├── git-push/SKILL.md       ← automatic GitLab/GitHub push
-│   ├── ground/SKILL.md         ← /ground pre-implementation grounding check
+│   ├── ground/SKILL.md         ← /ground pre-implementation grounding check + scope_files: blast-radius contract (enforced by grounding-guard on every edit)
 │   ├── parallel-design-agents/SKILL.md ← multi-agent workflow to explore different design options
 │   ├── preflight/SKILL.md      ← environment verification checklist before starting work
 │   ├── reviewer-rules/SKILL.md ← single source for the L1/L2/L3 review protocol (used by /ground + /ship)
@@ -217,20 +218,20 @@ Ran but FAIL? Still cannot stop.
 │   ├── hooks.json              ← hook event declarations
 │   ├── claude/
 │   │   ├── stop-guard.sh       ← Claude Code Stop event hook
-│   │   ├── grounding-guard.sh  ← Claude PreToolUse hook (blocks first un-grounded edit)
+│   │   ├── grounding-guard.sh  ← Claude PreToolUse hook (gate 1: blocks first un-grounded edit; gate 2: blocks every later edit outside /ground's scope_files: contract)
 │   │   ├── context-budget-guard.sh ← Claude PreToolUse hook (advisory: reminds to /clear when session grows large)
 │   │   ├── handoff-reminder.sh ← Claude SessionStart hook (after /clear: offer /resume+/handoff or transcript rebuild)
 │   │   ├── secret-redact.sh    ← Claude PostToolUse hook (rewrites Bash output to scrub credentials before the model/transcript sees them)
 │   │   └── stack-rules.sh      ← Claude SessionStart hook (emits ONLY the detected stack's rules file)
 │   ├── codex/
 │   │   ├── stop-guard.sh       ← Codex CLI Stop event hook
-│   │   ├── grounding-guard.sh  ← Codex PreToolUse hook (blocks first un-grounded apply_patch)
+│   │   ├── grounding-guard.sh  ← Codex PreToolUse hook (blocks first un-grounded apply_patch; also refuses a patch whose targets leave the scope_files: contract)
 │   │   ├── context-budget-guard.sh ← Codex advisory (reminds to start fresh; PreToolUse/Bash only)
 │   │   └── handoff-reminder.sh ← Codex SessionStart hook after /clear
 │   ├── agy/
 │   │   ├── hooks.json          ← agy named-hook registration, installed to ~/.gemini/config/hooks.json
 │   │   ├── stop-guard.sh       ← agy Stop hook (blocks the stop if PRECOMMIT_STATUS=PASS absent)
-│   │   ├── grounding-guard.sh  ← agy PreToolUse (write_to_file|replace_file_content|edit_notebook)
+│   │   ├── grounding-guard.sh  ← agy PreToolUse (write_to_file|replace_file_content|edit_notebook); same two gates, answered as JSON decisions
 │   │   ├── context-budget-guard.sh ← agy PreInvocation advisory (injects an ephemeralMessage)
 │   │   └── shared-guard-adapter.sh ← translates agy's JSON contract ↔ the shared guards' exit codes
 │   └── shared/
@@ -367,6 +368,23 @@ Tech stack detection logic for `/precommit`:
   because there are none — and it says so on the PASS line and records
   `mode=generic` in the receipt.
 
+**Scope contract & stale-receipt delta — status `[unverified]`.** Both landed
+2026-09-07 and are exercised by their suites against real payloads
+(`tests/grounding-guard.test.sh` 31 assertions, including the Codex and agy ports
+driven with their own payload shapes; `tests/precommit.test.sh` 102), but **neither
+has been observed firing inside a live session** — registration and a passing
+suite are not the same evidence, which is the lesson of the retired
+`complexity-guard`. To confirm, after `bash install.sh` and a restart:
+
+```bash
+# 1. /ground with a deliberately narrow scope, then edit something outside it —
+#    expect the "Outside the scope you declared" block naming the file:
+#      scope_files: README-nonexistent.txt
+#      GROUNDING_STATUS=PASS
+# 2. /precommit to PASS, then edit one file, then let the session stop —
+#    expect the block to name that file under "Changed since that PASS:".
+```
+
 ⛔ **Never write a precommit script (or a Makefile, or a test runner) into a repo
 to give the gate something to pass.** On 2026-08-21 detection failed in a
 stackless repo, `/precommit` returned FAIL, stop-guard refused the stop, and the
@@ -374,10 +392,15 @@ agent authored `.claude/commands/precommit.sh` in that repo and graded its own
 work with it. Generic mode is the fallback; the override is honoured only when
 git tracks it, so a script invented mid-session is ignored with a warning.
 
-`tests/precommit.test.sh` (39 assertions) pins generic mode, the tracked-only
+`tests/precommit.test.sh` (102 assertions) pins generic mode, the tracked-only
 override rule, and the receipt fingerprint — which all three `stop-guard.sh`
 files recompute inline, so a drift there fails **closed**: every PASS mismatches
-and the gate blocks forever. The Claude guard is exercised live in that test; the
+and the gate blocks forever. It also pins the receipt's **file manifest**
+(`file=<sha256>\t<path>` per pending file, plus `ts=`/`session=`/`branch=`),
+which is what lets a blocked stop name the files that moved since the PASS
+instead of demanding a blind full re-run. The manifest is reporting only — the
+decision still rests on `tree=` alone, so a bug in the delta cannot open the
+gate. The Claude guard is exercised live in that test; the
 Codex and agy copies are only checked for textual parity, since they answer with
 JSON decisions rather than exit codes.
 
