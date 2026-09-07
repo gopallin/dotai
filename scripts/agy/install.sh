@@ -47,7 +47,7 @@ AGY_SKILLS="$GEMINI_DIR/config/skills"
 mkdir -p "$AGY_SKILLS"
 rm -rf "$GEMINI_DIR/commands"   # legacy location agy never read
 
-for cmd in precommit plan map next-ticket handoff prompt; do
+for cmd in precommit plan map next-ticket handoff prompt incident; do
   dest="$AGY_SKILLS/$cmd"
   rm -rf "$dest"
   mkdir -p "$dest"
