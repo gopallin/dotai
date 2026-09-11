@@ -115,9 +115,36 @@ git checkout "$CURRENT_BRANCH"
 
 ---
 
-### Step 5: Open the Merge Request / Pull Request
+### Step 5: Open the Merge Request / Pull Request (Optional)
 
-**Detect the forge from `origin` first — do not assume GitLab.** GitHub has no
+**Ask the user** before opening a MR/PR:
+
+- Suggest the default target branch (detected in the forge sub-step below via `$TARGET_BRANCH`).
+- The user can:
+  - **Confirm** the default target branch → detect forge and proceed to 5a / 5b / 5c.
+  - **Provide a custom target branch** → use that as `$TARGET_BRANCH` and proceed.
+  - **Decline / skip** → print a raw click-through URL from `git remote get-url origin`
+    and stop Step 5. No forge detection, no API call.
+
+**If the user declines**, print a near-exact URL from the raw remote and stop:
+
+```bash
+REMOTE_URL=$(git remote get-url origin)
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+# Strip scheme/user/port/ssh prefix to get a bare host/path — good enough for a
+# click-through; no forge API is called when skipping.
+clean=${REMOTE_URL#*://}
+case "$clean" in *@*) clean=${clean#*@} ;; esac
+clean=${clean%.git}
+clean=${clean/://}   # scp-style colon → slash
+echo "Branch pushed. To open a PR/MR manually:"
+echo "  https://$clean/compare/$BRANCH"
+```
+
+**If the user confirms** (default or custom target branch), detect the forge and
+proceed to 5a / 5b / 5c:
+
+**Detect the forge from `origin` — do not assume GitLab.** GitHub has no
 `PRIVATE-TOKEN` API and GitLab has no `gh`, so guessing wrong wastes a step and
 produces a confusing error.
 
@@ -148,6 +175,7 @@ esac
 PROJECT_PATH=${rest%.git}
 
 # Default target branch, falling back to main when origin/HEAD is not set.
+# If the user provided a custom target branch above, override TARGET_BRANCH here.
 TARGET_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null \
   | sed 's@^refs/remotes/origin/@@')
 TARGET_BRANCH="${TARGET_BRANCH:-main}"
@@ -308,7 +336,8 @@ Report final execution status to the user:
 - ✅ L1/L2/L3 Review Passed (LGTM)
 - ✅ Branch Pushed (`origin/<branch>`)
 - ✅ Release Branch Pushed (`origin/<release-branch>`) (if applicable)
-- ✅ MR/PR Created (provide direct `web_url` link)
+- ✅ MR/PR Created (provide direct `web_url` link) (if user confirmed)
+- ⏭️ MR/PR Skipped (provide raw click-through URL) (if user declined)
 
 If Step 5 could not complete (token missing, token lacks a permission, unknown
 host), say so explicitly — steps 1-4 succeeding is **not** "shipped". Report which
