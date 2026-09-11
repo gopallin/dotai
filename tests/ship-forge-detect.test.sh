@@ -19,12 +19,14 @@ SKILL="$ROOT/skills/ship/SKILL.md"
 PASS=0
 FAIL=0
 
-# Pull the detection block out of the skill's first bash fence in Step 5.
+# Pull the detection block out of the skill. Rather than relying on "the first
+# bash fence in Step 5" (which breaks if a new fence is added before the forge
+# parser), locate the fence that actually contains the parser by anchoring on
+# the distinctive `t=${REMOTE_URL` line that opens the URL-stripping logic.
 SNIPPET=$(awk '
-  /^### Step 5:/        { in5=1 }
-  in5 && /^```bash$/    { if (!seen) { grab=1; seen=1; next } }
-  grab && /^```$/       { grab=0 }
-  grab                  { print }
+  /^```bash$/         { grab=1; buf=""; next }
+  grab && /^```$/     { if (buf ~ /\nt=\$\{REMOTE_URL/) { print buf }; grab=0; buf=""; next }
+  grab                { buf = buf "\n" $0 }
 ' "$SKILL")
 
 [ -n "$SNIPPET" ] || { echo "❌ could not extract the Step 5 detection snippet from $SKILL" >&2; exit 1; }
