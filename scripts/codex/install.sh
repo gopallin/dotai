@@ -289,6 +289,94 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
 echo "$UPDATED" > "$HOOKS_FILE"
 echo "✅ Hooks registered  → $HOOKS_FILE"
 
+# ── 5b. Report hooks that are registered but NOT trusted ─────────────────────
+#
+# Codex gates every hook behind a trust prompt that Claude Code and agy do not
+# have: "Hooks need review — hooks can run outside the sandbox after you trust
+# them", offering "Trust all and continue" / "Review hooks" / "Continue without
+# trusting (hooks won't run)". Declining writes `enabled = false` into
+# config.toml under [hooks.state], and the hook never fires again. [binary]
+#
+# Writing hooks.json is therefore NOT evidence that a guard runs, and the line
+# above says only that the file was written. Observed 2026-09-15 on this machine:
+# branch-guard, stop-guard, glab-guard and context-budget-guard had all been
+# sitting at `enabled = false` — registered, on disk, and completely inert. That
+# is the exact "looks installed, does nothing" failure this repo exists to catch,
+# so the installer now reads the state back and names what cannot run.
+#
+# Reporting only. It never writes trust state: `enabled = false` is a security
+# answer the user gave Codex deliberately, and forging it here would be dotai
+# overriding a human decision about which scripts may run outside the sandbox.
+#
+# Fails OPEN and silent — a missing/unparsable config.toml, an absent
+# [hooks.state], or a jq lookup miss must never break an install over a warning.
+
+report_untrusted_codex_hooks() {
+  local config="$1" hooks_file="$2"
+  [[ -f "$config" && -f "$hooks_file" ]] || return 0
+
+  local disabled
+  # Collect the [hooks.state."…"] keys whose block carries `enabled = false`.
+  # A block ends at the next line starting with '[' — TOML tables are flat here.
+  disabled=$(awk '
+    /^\[hooks\.state\."/ {
+      key = $0
+      sub(/^\[hooks\.state\."/, "", key)
+      sub(/"\][[:space:]]*$/, "", key)
+      current = key
+      next
+    }
+    /^\[/ { current = "" }
+    current != "" && /^[[:space:]]*enabled[[:space:]]*=[[:space:]]*false/ {
+      print current
+      current = ""
+    }
+  ' "$config" 2>/dev/null) || return 0
+
+  [[ -n "$disabled" ]] || return 0
+
+  local reported=0 key event group idx pascal cmd part
+  while IFS= read -r key; do
+    [[ -n "$key" ]] || continue
+    # The key is "<abs path to hooks.json>:<event>:<group>:<hook>". Take the LAST
+    # three fields, never `cut -f2-4` — the path itself can contain a colon and
+    # that would silently shift every field by one.
+    idx=${key##*:};        key=${key%:*}
+    group=${key##*:};      key=${key%:*}
+    event=${key##*:}
+    case "$group$idx" in ''|*[!0-9]*) continue ;; esac
+
+    # config.toml spells events snake_case; hooks.json spells them PascalCase.
+    pascal=""
+    local IFS=_
+    for part in $event; do
+      pascal="$pascal$(printf '%s' "${part:0:1}" | tr '[:lower:]' '[:upper:]')${part:1}"
+    done
+    unset IFS
+
+    cmd=$(jq -r --arg e "$pascal" --argjson g "$group" --argjson h "$idx" \
+      '(.hooks[$e][$g].hooks[$h].command // "") | split("/") | last' \
+      "$hooks_file" 2>/dev/null) || cmd=""
+    [[ -n "$cmd" && "$cmd" != "null" ]] || continue
+
+    if [[ $reported -eq 0 ]]; then
+      echo ""
+      echo "⚠️  Registered but NOT RUNNING — Codex has these hooks disabled:"
+      reported=1
+    fi
+    printf '      %-26s (%s)\n' "$cmd" "$pascal"
+  done <<< "$disabled"
+
+  if [[ $reported -eq 1 ]]; then
+    echo "    Codex requires you to trust a hook before it runs, and these were"
+    echo "    declined (enabled = false in $config)."
+    echo "    Fix inside Codex:  /hooks  → trust, then toggle each one on."
+    echo "    Until then the ✅ above means the file was written, not that the guard fires."
+  fi
+}
+
+report_untrusted_codex_hooks "$CONFIG_FILE" "$HOOKS_FILE" || true
+
 # ── Done ──────────────────────────────────────────────────────────────────────
 
 echo ""
