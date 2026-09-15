@@ -194,6 +194,7 @@ half-written `~/.gemini`. That check requires a shell where the CLI is on PATH
 5. Copy commands → `~/.claude/commands/`, `~/.codex/prompts/`, or agy skill dirs
 6. Copy `rules/` → `~/.claude/dotai-rules/` (Claude only; see §7 for Codex/agy)
 7. Install the status line (Claude, agy) or write native statusline items (Codex)
+8. Seed the response-verbosity default for the CLI (see §9)
 
 Each installer is **idempotent** — re-running it re-syncs and re-merges rather
 than duplicating entries — and each removes files retired by past ablations
@@ -503,7 +504,55 @@ usage、rate limits、git 等）；`scripts/codex/install.sh` writes its selecte
 
 ---
 
-### 9. Tests (`~/dotai/tests/`)
+### 9. Response Verbosity Defaults
+
+**Goal:** short answers by default, on all three CLIs, without spending the prose
+budget three times over.
+
+`GLOBAL_RULES.md` has carried *"Concise and direct"* since the ablation, and it is
+the weakest possible channel for this: a single line of appended prose, competing
+with the whole task, in sessions that run thousands of Bash calls. Two of the three
+CLIs have a **native** lever that outranks prose, so dotai uses each CLI's strongest
+one rather than writing the same rule three times:
+
+| CLI | Lever | Where | Strength |
+|---|---|---|---|
+| Claude Code | `outputStyle: "Concise"` | `~/.claude/settings.json` | Built-in output style — **replaces** the default instructions rather than appending to them. Zero token cost. |
+| Codex | `model_verbosity = "medium"` | `~/.codex/config.toml` | Native API-layer parameter, next to `model_reasoning_effort`. Cannot be crowded out by context. |
+| agy | prose | `GLOBAL_RULES.md` → `~/.gemini/config/AGENTS.md` | The only option — agy's customization surface is Rules / Skills / Plugins / Hooks / MCP, and `config.json` holds no verbosity key **[probed]**. |
+
+Two deliberate details:
+
+- **Both settings are seeded only when absent** (`jq //=` for Claude, a `grep`
+  guard for Codex) — unlike `statusLine`, which dotai owns and overwrites. These
+  are preference dials: `/config` writes the user's pick (to
+  `.claude/settings.local.json`, which outranks the user-level file anyway), and a
+  re-install must not undo a deliberate change.
+- **`model_verbosity` is a top-level TOML key**, so the installer inserts it
+  *before the first `[table]` header*. Appended at EOF it would land inside
+  `[projects."…"]` and be read as a member of that table — the silent
+  "looks installed, does nothing" failure this repo keeps hitting.
+
+The prose half keeps an explicit carve-out — explanations on request, error
+reports, security warnings, and destructive-action confirmations stay full
+length — because a brevity rule without it becomes a correctness bug. The built-in
+Concise style makes the same guarantee natively.
+
+**Version floor:** the Concise style requires Claude Code **≥ 2.1.237**. On an
+older CLI the name resolves to nothing and verbosity silently stays default, so
+`scripts/claude/install.sh` compares `claude --version` and prints a
+`claude update` warning rather than letting the setting look effective.
+
+**Status: `[unverified]`** for Codex. `model_verbosity` is confirmed present in the
+0.153.4 executable **[binary]** and `tests/output-verbosity.test.sh` pins where the
+installer writes it, but it has **not been observed shortening a live response** —
+registration is not evidence (§4, and the retired `complexity-guard`). Claude's
+`outputStyle` is a documented settings key, so only its effect on *this* machine
+waits on the version bump above.
+
+---
+
+### 10. Tests (`~/dotai/tests/`)
 
 **Not installed.** They run from the repo, and they are the layer that makes the
 philosophy — *don't trust AI to do the right thing, use code to ensure it* — apply
@@ -525,6 +574,7 @@ for t in tests/*.test.sh; do bash "$t" || echo "FAILED: $t"; done
 | `agy-install.test.sh`, `codex-install.test.sh`, `skills-install.test.sh` | where each installer writes; the skill layout for all three CLIs, including cleanup of legacy flat files |
 | `stack-rules.test.sh` | stack detection and that exactly one rules file is emitted |
 | `reviewer-rules.test.sh` | fails if project-specific rules reappear under `skills/` or `rules/` |
+| `output-verbosity.test.sh` | the concise defaults (§9): `outputStyle` and `model_verbosity` are seeded but never overwrite a user's own value, `model_verbosity` lands **above** the first TOML table header rather than inside it, and the prose half keeps its full-length carve-out for explanations, errors, and warnings |
 | `ship-forge-detect.test.sh`, `map-command.test.sh`, `codex-handoff-reminder.test.sh` | forge routing from `origin`, the map command contract, the post-`/clear` reminder |
 
 A passing suite is **not** proof a hook fires: the CLI still has to invoke it.

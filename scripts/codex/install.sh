@@ -67,6 +67,39 @@ awk -v status_line="$STATUS_LINE" '
 mv "$CONFIG_TMP" "$CONFIG_FILE"
 echo "✅ TUI status line    → $CONFIG_FILE"
 
+# ── 2b. Response verbosity ───────────────────────────────────────────────────
+#
+# Codex's native output-length knob, alongside the model_reasoning_effort key it
+# already reads. It acts at the API layer, so unlike a line in AGENTS.md it cannot
+# be crowded out by a long tool-heavy session.
+#
+# Seeded ONLY when absent, for the same reason as Claude's outputStyle: this is a
+# preference dial, not a dotai-owned key, and a re-install must not overwrite a
+# value the user tuned. Status: [binary] — the key is present in the codex 0.153.4
+# executable; it has NOT been observed changing output in a live session.
+#
+# model_verbosity is a TOP-LEVEL key. Appending it at EOF would land it inside
+# whatever [table] happens to be last (config.toml ends in [projects.…] /
+# [hooks.state.…] blocks), where TOML reads it as a member of that table and Codex
+# never sees it. So it is inserted before the FIRST table header instead.
+MODEL_VERBOSITY='model_verbosity = "medium"'
+
+if grep -Eq '^[[:space:]]*model_verbosity[[:space:]]*=' "$CONFIG_FILE"; then
+  echo "✅ Response verbosity → $CONFIG_FILE (kept existing model_verbosity)"
+else
+  CONFIG_TMP=$(mktemp "$CODEX_DIR/config.toml.XXXXXX")
+  awk -v line="$MODEL_VERBOSITY" '
+    !written && /^[[:space:]]*\[/ {
+      print line
+      written = 1
+    }
+    { print }
+    END { if (!written) print line }
+  ' "$CONFIG_FILE" > "$CONFIG_TMP"
+  mv "$CONFIG_TMP" "$CONFIG_FILE"
+  echo "✅ Response verbosity → $CONFIG_FILE ($MODEL_VERBOSITY)"
+fi
+
 # ── 3. Commands (Codex custom prompts: ~/.codex/prompts/*.md → /name) ─────────
 
 mkdir -p "$CODEX_DIR/prompts"
