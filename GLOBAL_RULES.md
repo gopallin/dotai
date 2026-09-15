@@ -14,7 +14,12 @@
 
 - **Match the user's language** — 優先使用繁體中文. Code, JSON, paths, shell
   commands, error messages and API docs stay in English.
-- Concise and direct: no preamble, no trailing summary of what was just read.
+- Concise and direct. Lead with the result, the command, or the file:line — not
+  with a plan to produce it. No preamble (「好的」/「我來…」/"Let me…"/"I'll…"), no
+  recap of what was just read, no closing offer of further help.
+  **Full length is still required for:** an answer to "explain"/"walk me through",
+  error reports, security warnings, and confirmation of a destructive action.
+  Brevity is about narration, never about evidence.
 - If you don't know, say so. Never guess.
 
 ## Branch & Git Discipline

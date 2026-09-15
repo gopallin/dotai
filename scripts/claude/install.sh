@@ -311,11 +311,40 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
     "type": "command",
     "command": "bash \($home)/.claude/statusline.sh",
     "padding": 0
-  }
+  } |
+  # Default the output style to the built-in "Concise" one: lead with the result,
+  # skip preamble and narration. This is the strongest verbosity lever Claude Code
+  # has — an output style REPLACES the default instructions, where GLOBAL_RULES.md
+  # only appends a line that a long tool-heavy session drowns out. It costs no
+  # tokens (built-in) and leaves error reports, security warnings and
+  # destructive-action confirmations at full length by design.
+  #
+  # `//=`, not `=`: unlike statusLine, dotai does NOT own this key. It seeds a
+  # default on a fresh machine and then gets out of the way — /config writes
+  # whatever the user picks (to .claude/settings.local.json, which outranks this file
+  # anyway), and a re-install must not undo a deliberate change.
+  .outputStyle //= "Concise"
 ')
 
 echo "$UPDATED" > "$SETTINGS"
 echo "✅ Hooks registered   → $SETTINGS"
+echo "✅ Output style       → $(jq -r '.outputStyle' "$SETTINGS") (seeded only when unset; change with /config)"
+
+# The Concise style shipped in 2.1.237. On an older CLI the name resolves to
+# nothing and the session silently keeps the default verbosity — exactly the
+# "looks installed, does nothing" failure this repo keeps hitting — so say it out
+# loud rather than letting the setting look effective.
+# `|| true`: `set -e` would abort the whole install on a machine where `claude`
+# is not on PATH, and a missing version is not a reason to fail the install.
+CC_VERSION=$(claude --version 2>/dev/null | awk '{print $1}' || true)
+if [[ -n "$CC_VERSION" ]]; then
+  CC_MIN="2.1.237"
+  if [[ "$(printf '%s\n%s\n' "$CC_MIN" "$CC_VERSION" | sort -V | head -1)" != "$CC_MIN" ]]; then
+    echo "⚠️  Claude Code $CC_VERSION is older than $CC_MIN — the built-in \"Concise\""
+    echo "    output style does not exist yet and the setting will have no effect."
+    echo "    Run: claude update"
+  fi
+fi
 
 # ── 5. Install stack rules (conditionally loaded, NOT global) ─────────────────
 #
