@@ -663,6 +663,47 @@ check the stack-rules header appears in context:
 # expect: "# Stack rules: laravel (auto-loaded by dotai stack-rules.sh …)"
 ```
 
+### Hook trust — Codex only, and it can silently disable every guard
+
+Codex gates each hook behind a trust prompt that neither Claude Code nor agy has.
+At startup it shows *"Hooks need review — hooks can run outside the sandbox after
+you trust them"* with **Trust all and continue** / **Review hooks** / **Continue
+without trusting (hooks won't run)**. Choosing the last one writes
+`enabled = false` into `~/.codex/config.toml`:
+
+```toml
+[hooks.state."/Users/<you>/.codex/hooks.json:pre_tool_use:0:0"]
+trusted_hash = "sha256:…"
+enabled = false
+```
+
+The key is `<hooks.json path>:<event_snake_case>:<group_index>:<hook_index>`, and
+the indices are positions in the array `scripts/codex/install.sh` writes — which is
+what makes an index → guard-name lookup reliable rather than a guess. **Split that
+key from the right**: it embeds an absolute path, and a path containing a colon
+shifts every field if you split from the left. `/hooks` inside Codex opens the
+browser that toggles them back on (*"Turn hooks on or off. Your changes are saved
+automatically"*). All of this is **[binary]** — read from the 0.153.4 executable,
+not yet observed in a live session.
+
+**Observed 2026-09-15:** `branch-guard`, `stop-guard`, `glab-guard` and
+`context-budget-guard` had all been sitting at `enabled = false` on this machine.
+Registered, on disk, correct — and completely inert, including both of the gates
+this repo is built around. `hooks.json` looked perfectly installed the entire time.
+
+So `scripts/codex/install.sh` now reads the state back after writing `hooks.json`
+and names any guard that cannot run. It is **reporting only and never writes trust
+state** — `enabled = false` is a security answer the user gave Codex about which
+scripts may run outside the sandbox, and forging it would be dotai overriding a
+human decision. An entry carrying a `trusted_hash` with no `enabled` key is *not*
+reported: whether that means "trusted" or "new, awaiting review" is unverified, and
+guessing either way would make the warning lie.
+
+**Do not port this to Claude or agy.** Neither has a trust model — their hooks run
+as soon as they are registered — so a copy would be an inert file of exactly the
+kind §agy Hook Contract warns about. `tests/codex-hook-trust.test.sh` (17
+assertions) fails if one appears.
+
 ### Commands — agy has no such concept
 
 agy's customization types are Rules, Skills, Plugins, Hooks, and MCP servers.

@@ -267,6 +267,16 @@ Codex and agy register the same guards through their own formats
 `shared-guard-adapter.sh`, because it ignores exit codes and reads a JSON
 decision from stdout (CLAUDE.md §agy Hook Contract).
 
+> ⚠️ **On Codex, registration is not enough.** Codex gates each hook behind a
+> trust prompt; declining it writes `enabled = false` under `[hooks.state]` in
+> `config.toml` and the hook never fires, while `hooks.json` still looks fully
+> installed. Four guards — `branch-guard`, `stop-guard`, `glab-guard`,
+> `context-budget-guard` — were found in exactly that state on 2026-09-15, which
+> means both headline gates were inert. `scripts/codex/install.sh` now reads the
+> state back and names any guard that cannot run; the fix is `/hooks` inside
+> Codex. It reports and never writes trust state. See CLAUDE.md §Hook trust and
+> `tests/codex-hook-trust.test.sh`.
+
 **Retired (2026-08 ablation, see `docs/ABLATION.md`):** `complexity-guard.sh` was
 provably inert under Claude Code — it read the `CLAUDE_TOOL_NAME` env var, which
 Claude Code does not set, so its `case` never matched. `read-dedup-guard.sh`
@@ -574,6 +584,7 @@ for t in tests/*.test.sh; do bash "$t" || echo "FAILED: $t"; done
 | `agy-install.test.sh`, `codex-install.test.sh`, `skills-install.test.sh` | where each installer writes; the skill layout for all three CLIs, including cleanup of legacy flat files |
 | `stack-rules.test.sh` | stack detection and that exactly one rules file is emitted |
 | `reviewer-rules.test.sh` | fails if project-specific rules reappear under `skills/` or `rules/` |
+| `codex-hook-trust.test.sh` | that the Codex installer names every guard sitting at `enabled = false`, resolves its name through `hooks.json` rather than a hardcoded list, stays silent for entries that were never disabled, never rewrites trust state, never fails an install over a warning, and is not ported to the two CLIs that have no trust model |
 | `output-verbosity.test.sh` | the concise defaults (§9): `outputStyle` and `model_verbosity` are seeded but never overwrite a user's own value, `model_verbosity` lands **above** the first TOML table header rather than inside it, and the prose half keeps its full-length carve-out for explanations, errors, and warnings |
 | `ship-forge-detect.test.sh`, `map-command.test.sh`, `codex-handoff-reminder.test.sh` | forge routing from `origin`, the map command contract, the post-`/clear` reminder |
 
