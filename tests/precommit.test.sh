@@ -521,6 +521,89 @@ run_precommit "$D"
 grep -Eq '✅ lint \(typecheck\)' <<< "$OUT" && ok \
   || bad "with no lint:fix/lint, typecheck should serve as the lint step: $OUT"
 
+# ── The lint step must not rewrite files the change never touched ─────────────
+#
+# Regression for 2026-09-29 (nxl-shipping-client): the lint step ran a linter
+# that fixes by default and left 62 unrelated files modified, which then follow
+# the branch into the commit — and which change the very tree fingerprint the
+# receipt is keyed to.
+
+# A lint script that behaves like `eslint --fix`: it edits a file nobody touched.
+D=$(node_repo node-lint-writes package-lock.json '"lint":"sh ./fixer.sh","build":"true","test":"true"')
+printf 'original\n' > "$D/untouched.js"
+git -C "$D" add untouched.js && git -C "$D" commit -qm "add untouched.js"
+printf '#!/bin/sh\nprintf "rewritten\\n" > untouched.js\n' > "$D/fixer.sh"
+printf 'pending\n' > "$D/mine.js"
+run_precommit "$D"
+
+[ "$RC" -eq 0 ] && ok || bad "a writing linter that exits 0 should still pass: $OUT"
+[ "$(cat "$D/untouched.js")" = "original" ] && ok   || bad "lint rewrote a file the change never touched; it must be restored: $(cat "$D/untouched.js")"
+grep -Fq 'untouched.js' <<< "$OUT" && ok   || bad "the restore must be reported by name, not done silently: $OUT"
+# Visible on the PASS path specifically — run_step swallows a passing step's
+# output, which is how this went unnoticed for a whole session.
+grep -Fq 'linter fixes by default' <<< "$OUT" && ok   || bad "the notice must survive the PASS path: $OUT"
+# The work itself is never reverted: mine.js was already pending.
+[ "$(cat "$D/mine.js")" = "pending" ] && ok   || bad "a file that was already pending must never be restored"
+
+# A linter that CREATES a file cannot be undone with `git checkout --` (the path
+# is untracked). Deleting it would be the gate writing to the repo in the other
+# direction, so it is left in place — and must NOT be counted as restored.
+D=$(node_repo node-lint-creates package-lock.json '"lint":"sh ./fixer.sh","build":"true","test":"true"')
+printf '#!/bin/sh\nprintf "generated\\n" > generated.js\n' > "$D/fixer.sh"
+run_precommit "$D"
+[ "$RC" -eq 0 ] && ok || bad "a linter that creates a file should still pass: $OUT"
+[ -f "$D/generated.js" ] && ok || bad "an untracked file the gate cannot restore must be left, not deleted"
+grep -Fq 'left in place' <<< "$OUT" && ok \
+  || bad "a file that could not be restored must not be reported as restored: $OUT"
+grep -Eq 'so 0 were restored' <<< "$OUT" && ok \
+  || bad "the restored count must exclude files git could not restore: $OUT"
+
+# `lint:fix` is the last choice, not the first: given both, the non-writing one wins.
+D=$(node_repo node-lint-order package-lock.json '"lint":"true","lint:fix":"false","build":"true","test":"true"')
+run_precommit "$D"
+grep -Fq 'lint=lint ' <<< "$OUT" && ok   || bad "lint must be preferred over lint:fix: $OUT"
+
+# But a repo declaring ONLY lint:fix still gets a lint step — narrowing the gate
+# would be worse than running the fixing script under the restore guard.
+D=$(node_repo node-lint-fix-only package-lock.json '"lint:fix":"true","build":"true","test":"true"')
+run_precommit "$D"
+grep -Eq '✅ lint \(lint:fix\)' <<< "$OUT" && ok   || bad "lint:fix must still serve as the lint step when it is all there is: $OUT"
+
+# ── A lint failure nobody caused must not gate, but must still be reported ────
+#
+# Otherwise the FAIL is permanent: no edit to the author's own work clears debt
+# sitting in files they never touched, so stop-guard refuses every stop. That is
+# the pressure behind the 2026-08-21 incident this suite was written for.
+
+# The linter fails, naming only a file that is committed and untouched.
+D=$(node_repo node-lint-legacy-debt package-lock.json '"lint":"sh ./linter.sh","build":"true","test":"true"')
+printf 'legacy\n' > "$D/legacy.js"
+git -C "$D" add legacy.js && git -C "$D" commit -qm "add legacy.js"
+printf '#!/bin/sh\necho "error: bad quotes at legacy.js:3:1"\nexit 1\n' > "$D/linter.sh"
+printf 'mine\n' > "$D/mine.js"
+run_precommit "$D"
+
+[ "$RC" -eq 0 ] && ok || bad "debt in untouched files must not gate, got $RC: $OUT"
+grep -Fq 'not gated' <<< "$OUT" && ok   || bad "an ungated lint failure must be stated, not hidden behind a green tick: $OUT"
+[ "$(receipt_field "$D" status)" = "PASS" ] && ok   || bad "receipt should record PASS when the only failures are unattributable"
+
+# Same linter, but now it names the file the change actually touched → gates.
+D=$(node_repo node-lint-own-debt package-lock.json '"lint":"sh ./linter.sh","build":"true","test":"true"')
+printf '#!/bin/sh\necho "error: bad quotes at mine.js:3:1"\nexit 1\n' > "$D/linter.sh"
+printf 'mine\n' > "$D/mine.js"
+run_precommit "$D"
+[ "$RC" -ne 0 ] && ok || bad "a finding in a file this change touched must still fail: $OUT"
+[ "$(receipt_field "$D" status)" = "FAIL" ] && ok || bad "receipt should record FAIL for an attributable finding"
+
+# Workspace shape: the linter runs inside a package and prints package-relative
+# paths, so full-path matching alone would miss it and fail OPEN.
+D=$(node_repo node-lint-workspace package-lock.json '"lint":"sh ./linter.sh","build":"true","test":"true"')
+mkdir -p "$D/packages/web/src"
+printf '#!/bin/sh\necho "error: oops at src/Widget.vue:1:1"\nexit 1\n' > "$D/linter.sh"
+printf '<template/>\n' > "$D/packages/web/src/Widget.vue"
+run_precommit "$D"
+[ "$RC" -ne 0 ] && ok   || bad "a package-relative path must still be attributed to the pending file: $OUT"
+
 # No lint-shaped script at all → the other two still gate, and the header says so.
 D=$(node_repo node-nolint package-lock.json '"build":"true","test":"true"')
 run_precommit "$D"
