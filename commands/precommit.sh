@@ -706,6 +706,167 @@ node_pick_script() {
   printf ''
 }
 
+# ── The lint step must not write to the repo ──────────────────────────────────
+#
+# Observed 2026-09-29 in nxl-shipping-client: the lint step rewrote 62 files the
+# change had never touched (quote and spacing fixes across apps/legacy), because
+# it ran `npm run lint` → `vue-cli-service lint`, which fixes by default. Two
+# harms, and the second is what makes it structural:
+#
+#   1. Those rewrites follow the branch into the next commit, so the diff stops
+#      being reviewable — a failure that repo's own CLAUDE.md already warns
+#      about, here caused by the gate meant to protect the commit.
+#   2. The gate mutates the very tree whose fingerprint it then writes into the
+#      receipt. A gate that edits its own subject cannot attest to it, and
+#      stop-guard compares that fingerprint on every stop.
+#
+# So: a file that was CLEAN before the lint step and dirty after it was touched
+# by the linter, not by the work, and is restored. A file that was already
+# pending is left alone — reverting that would destroy the actual change, which
+# is far worse than the mess being undone.
+# Sorted pending paths. `sort` because node_restore_lint_writes diffs two of
+# these with `comm`, which requires sorted input. The quote-stripping matches
+# generic_collect_files: git quotes any path with a space or a special
+# character, and a quoted path is not one `git checkout --` can resolve.
+#
+# Yes, this is the fifth copy of the porcelain-parsing line in this file. The
+# two above it are locked textually to the three stop-guard.sh copies by
+# tests/precommit.test.sh and must not grow a shared helper; this one follows
+# generic_collect_files instead, which is the closest existing shape.
+node_snapshot_pending() {
+  git status --porcelain -uall 2>/dev/null \
+    | sed 's/^.\{3\}//' | sed 's/.* -> //' | sed 's/^"//; s/"$//' | sort
+}
+
+# Repair and reporting only. Deliberately cannot fail the step: a bug here must
+# not be able to open or close the gate.
+#
+# The report goes to NODE_WARN_FILE rather than stdout because run_step swallows
+# a passing step's output — and "your gate just rewrote 62 files" is exactly the
+# thing that must not be invisible on the PASS path. Same reason, same mechanism
+# as LARAVEL_WARN_FILE.
+NODE_WARN_FILE=""
+
+node_restore_lint_writes() {
+  local before="$1" after touched n f
+  after=$(node_snapshot_pending)
+  touched=$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after"))
+  [[ -n "$touched" ]] || return 0
+
+  n=$(printf '%s\n' "$touched" | grep -c .)
+  # A file the linter CREATED is untracked, so `git checkout --` cannot restore
+  # it and reports "did not match any file". Deleting it would be this gate
+  # writing to the repo in the other direction, so it is left in place and
+  # counted separately — saying "restored" for a file still sitting there is
+  # the false-coverage claim this repo exists to stop.
+  local kept=0
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    git checkout -- "$f" 2>/dev/null || kept=$(( kept + 1 ))
+  done < <(printf '%s\n' "$touched")
+
+  if [[ -n "$NODE_WARN_FILE" ]]; then
+    {
+      echo "restored=$(( n - kept ))"
+      echo "kept=${kept}"
+      printf '%s\n' "$touched" | head -10 | sed 's/^/file=/'
+    } > "$NODE_WARN_FILE"
+  fi
+
+  # Also to stdout, for the FAIL path: run_step prints a failing step's output
+  # and then exits, so node_report_lint_writes never gets to run there.
+  node_write_notice "$(( n - kept ))" "$kept" "$touched"
+}
+
+node_write_notice() {
+  local n="$1" kept="$2" list="$3" total=$(( $1 + $2 ))
+  echo ""
+  echo "⚠️  The lint step modified ${total} file(s) this change never touched — its"
+  echo "    linter fixes by default. A gate must not write to the tree it is"
+  echo "    about to fingerprint, so ${n} were restored:"
+  printf '%s\n' "$list" | head -10 | sed 's/^/      /'
+  [[ $total -gt 10 ]] && echo "      … and $(( total - 10 )) more"
+  [[ $kept -gt 0 ]] && echo "    ${kept} were newly CREATED by the linter and are left in place —" \
+                   && echo "    untracked, so git cannot restore them. Review and remove by hand."
+  return 0
+}
+
+# The PASS path. run_step swallowed the notice above, so re-emit it from the
+# warn file, then clear it.
+node_report_lint_writes() {
+  local n kept list
+  if [[ -n "$NODE_WARN_FILE" && -s "$NODE_WARN_FILE" ]]; then
+    n=$(sed -n 's/^restored=//p' "$NODE_WARN_FILE")
+    if [[ -n "$n" ]]; then
+      kept=$(sed -n 's/^kept=//p' "$NODE_WARN_FILE")
+      list=$(sed -n 's/^file=//p' "$NODE_WARN_FILE")
+      node_write_notice "$n" "${kept:-0}" "$list"
+    fi
+    # A step that passed only because its failures were unattributable must say
+    # so on the PASS path too, or the receipt reads as a clean lint.
+    if grep -Fq 'ungated=1' "$NODE_WARN_FILE"; then
+      echo "   ↳ lint failed only in files this change did not touch — reported,"
+      echo "     not gated. Run the linter yourself to see the pre-existing debt."
+    fi
+  fi
+  [[ -n "$NODE_WARN_FILE" ]] && rm -f "$NODE_WARN_FILE"
+  NODE_WARN_FILE=""
+}
+
+# Does the linter's output name any file this change touched?
+#
+# Attribution by filename rather than by parsing a report format: eslint,
+# vue-cli-service, biome and tsc all print differently, and a parser for each is
+# a maintenance surface that fails silently when one of them changes. Grepping
+# the output for the pending files' own paths works for all of them.
+#
+# Both the repo-relative path and the bare basename are tried, because a linter
+# invoked inside a workspace prints paths relative to THAT package
+# (`src/x/Y.vue`), not to the repo root (`apps/legacy/src/x/Y.vue`). Matching only
+# the full path would miss those and fail OPEN — the one direction this must not
+# fail. A basename collision merely gates a run that would have gated anyway.
+node_failure_is_mine() {
+  local out="$1" f
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    case "$f" in *.js|*.jsx|*.mjs|*.cjs|*.ts|*.tsx|*.vue) ;; *) continue ;; esac
+    printf '%s' "$out" | grep -Fq "$f"            && return 0
+    printf '%s' "$out" | grep -Fq "$(basename "$f")" && return 0
+  done < <(node_snapshot_pending)
+  return 1
+}
+
+# A lint failure in files nobody touched is not this change's failure, and
+# gating on it makes the FAIL permanent: nothing the author can do to their own
+# work clears it, so stop-guard refuses every stop forever. That pressure is
+# exactly what produced the 2026-08-21 incident documented above — the agent
+# wrote its own precommit script to get past a gate it could not satisfy.
+#
+# It stays a real gate: a finding in a file this change touched still fails,
+# which is the line `|| true` would have crossed. Same rule laravel_lint applies
+# at line granularity; this is the file-granularity version, because no linter
+# output format can be assumed here.
+node_lint() {
+  local before out rc
+  before=$(node_snapshot_pending)
+  out=$("$NODE_PM" run "$NODE_LINT" 2>&1)
+  rc=$?
+  node_restore_lint_writes "$before"
+  printf '%s\n' "$out"
+
+  [[ $rc -eq 0 ]] && return 0
+  if node_failure_is_mine "$out"; then
+    return "$rc"
+  fi
+
+  echo ""
+  echo "   ↳ not gated: the linter failed, but named no file this change"
+  echo "     touched. Pre-existing debt in untouched files is reported, not"
+  echo "     gated — otherwise this FAIL could never be cleared from here."
+  [[ -n "$NODE_WARN_FILE" ]] && echo "ungated=1" >> "$NODE_WARN_FILE"
+  return 0
+}
+
 # ── Tech stack detection ──────────────────────────────────────────────────────
 
 if [[ -f "artisan" ]]; then
@@ -776,7 +937,11 @@ case "$STACK" in
       exit 1
     fi
 
-    NODE_LINT=$(node_pick_script lint:fix lint typecheck type-check)
+    # `lint:fix` last, not first. It was first, which made the gate prefer the
+    # one variant guaranteed to rewrite the repo — see node_lint above. When a
+    # project declares only `lint:fix`, it still runs, but node_lint undoes what
+    # it wrote to files this change did not touch.
+    NODE_LINT=$(node_pick_script lint typecheck type-check lint:fix)
     NODE_BUILD=$(node_pick_script build)
     NODE_TEST=$(node_pick_script test:unit test)
 
@@ -811,7 +976,11 @@ case "$STACK" in
       # `if` blocks rather than `[[ … ]] && run_step …`: the && form leaves a
       # non-zero status behind when the guard is false, which under `set -o
       # pipefail` is a trap waiting for the next person who adds `set -e`.
-      if [[ -n "$NODE_LINT" ]];  then run_step "lint (${NODE_LINT})"   "$NODE_PM" run "$NODE_LINT";  fi
+      if [[ -n "$NODE_LINT" ]]; then
+        NODE_WARN_FILE=$(mktemp -t dotai-precommit-node-warn)
+        run_step "lint (${NODE_LINT})" node_lint
+        node_report_lint_writes
+      fi
       if [[ -n "$NODE_BUILD" ]]; then run_step "build (${NODE_BUILD})" "$NODE_PM" run "$NODE_BUILD"; fi
       if [[ -n "$NODE_TEST" ]];  then run_step "test (${NODE_TEST})"   "$NODE_PM" run "$NODE_TEST";  fi
     fi
