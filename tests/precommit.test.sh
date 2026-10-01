@@ -437,6 +437,18 @@ for g in codex agy; do
   fi
 done
 
+# The refusal breaker decides when a gate gives up, so a drifted copy would
+# give up on a different schedule per CLI — or, worse, never.
+BREF=$(extract_fn "$ROOT/hooks/claude/stop-guard.sh" precommit_refusal_breaker)
+[ -n "$BREF" ] && ok || bad "could not extract precommit_refusal_breaker() from claude/stop-guard.sh"
+for g in codex agy; do
+  if [ "$(extract_fn "$ROOT/hooks/$g/stop-guard.sh" precommit_refusal_breaker)" = "$BREF" ]; then
+    ok
+  else
+    bad "$g/stop-guard.sh precommit_refusal_breaker() drifted from claude's"
+  fi
+done
+
 # The receipt has to carry the fields the report is built from. Asserting the
 # fields, not their values: `session` may legitimately be `unknown` off-CLI.
 D=$(new_repo receipt-fields)
@@ -646,6 +658,183 @@ run_precommit "$D"
 grep -Fq 'PRECOMMIT_MODE=vue' <<< "$OUT" && ok || bad "vite.config.ts should detect vue"
 grep -Eq '✅ test \(test:unit\)' <<< "$OUT" && ok \
   || bad "test:unit should win over test when both could apply: $OUT"
+
+# ── Monorepo: scripts come from the workspaces that own the pending files ─────
+#
+# Regression for 2026-10-01 (nxl-shipping-client). Root `lint` delegated to
+# apps/legacy, whose 375 pre-existing errors had nothing to do with a change
+# confined to apps/next and packages/core — and a bare-basename collision
+# (`picking.js`) made node_failure_is_mine attribute one of them to the change
+# anyway. The receipt went FAIL with no way to clear it, and stop-guard refused
+# nine consecutive stops. Two rules below: with `workspaces` declared, the
+# owning workspaces' scripts run instead of root's; and attribution never rests
+# on a bare basename.
+
+mono_repo() {   # $1 = fixture name → root with workspaces apps/* and packages/*
+  local d; d=$(new_repo "$1")
+  printf '{"name":"root","workspaces":["apps/*","packages/*"],"scripts":{"lint":"sh ./legacy-lint.sh","build":"true","test":"true"}}\n' > "$d/package.json"
+  printf '{}\n' > "$d/package-lock.json"
+  mkdir -p "$d/apps/legacy/src/store" "$d/apps/next/src/stores" "$d/packages/core/src"
+  printf '{"name":"legacy","scripts":{"lint":"sh ../../legacy-lint.sh","build":"true","test":"true"}}\n' > "$d/apps/legacy/package.json"
+  printf '{"name":"next","scripts":{"build":"true"}}\n' > "$d/apps/next/package.json"
+  printf '{"name":"core"}\n' > "$d/packages/core/package.json"
+  # The legacy linter always fails, naming a committed legacy file whose
+  # basename collides with the pending apps/next file — the nxl shape.
+  printf '#!/bin/sh\necho "error: unused var at src/store/picking.js:58:33"\nexit 1\n' > "$d/legacy-lint.sh"
+  printf 'legacy\n' > "$d/apps/legacy/src/store/picking.js"
+  git -C "$d" add -A && git -C "$d" commit -qm "monorepo fixture"
+  printf '%s' "$d"
+}
+
+# A change confined to apps/next: its own build runs, root's legacy lint does not.
+D=$(mono_repo mono-next-only)
+printf 'mine\n' > "$D/apps/next/src/stores/picking.js"
+run_precommit "$D"
+[ "$RC" -eq 0 ] && ok || bad "a change confined to apps/next must not be gated by apps/legacy's lint: $OUT"
+grep -Fq 'PRECOMMIT_MODE=node' <<< "$OUT" && ok || bad "mono: mode stays node when a workspace built: $OUT"
+grep -Eq '✅ build \(apps/next: build\)' <<< "$OUT" && ok \
+  || bad "mono: the owning workspace's build must run and be named: $OUT"
+grep -Eq '(✅|❌) (lint|build|test) \((lint|build|test)\)' <<< "$OUT" \
+  && bad "mono: root scripts must not run when no root-level file is pending: $OUT" || ok
+grep -Fq 'lint (apps/legacy' <<< "$OUT" \
+  && bad "mono: apps/legacy's lint must not run for an apps/next change: $OUT" || ok
+grep -Fq 'Root scripts skipped' <<< "$OUT" && ok || bad "mono: skipping root's scripts must be stated: $OUT"
+grep -Fq 'Pending files are owned by: apps/next' <<< "$OUT" && ok \
+  || bad "mono: the owning workspaces must be named in the header: $OUT"
+[ "$(receipt_field "$D" status)" = PASS ] && ok || bad "mono: receipt should be PASS"
+
+# A workspace with no scripts beside one that builds: said out loud, not hidden
+# behind the sibling's green tick.
+D=$(mono_repo mono-core-nothing)
+printf 'core\n' > "$D/packages/core/src/http.js"
+printf 'mine\n' > "$D/apps/next/src/stores/picking.js"
+run_precommit "$D"
+[ "$RC" -eq 0 ] && ok || bad "mono: a scriptless workspace must not fail the run: $OUT"
+grep -Fq 'packages/core/package.json declares neither a build nor a test script' <<< "$OUT" && ok \
+  || bad "mono: a workspace that gated nothing must be named: $OUT"
+grep -Eq '✅ build \(apps/next: build\)' <<< "$OUT" && ok || bad "mono: the sibling's build still runs: $OUT"
+
+# Only a scriptless workspace owns pending files → generic, honestly.
+D=$(mono_repo mono-core-only)
+printf 'core\n' > "$D/packages/core/src/http.js"
+run_precommit "$D"
+[ "$RC" -eq 0 ] && ok || bad "mono: nothing to run must not be an unclearable FAIL: $OUT"
+grep -Fq 'PRECOMMIT_MODE=generic' <<< "$OUT" && ok \
+  || bad "mono: a run that built and tested nothing must record mode=generic: $OUT"
+grep -Fq 'No workspace owning a pending file declares a build or a test' <<< "$OUT" && ok \
+  || bad "mono: the fallback must say why: $OUT"
+
+# The gate still bites inside a workspace: a pending apps/legacy file that its
+# own linter names (workspace-relative, `src/store/picking.js`) → FAIL.
+D=$(mono_repo mono-legacy-own)
+printf 'edited\n' > "$D/apps/legacy/src/store/picking.js"
+run_precommit "$D"
+[ "$RC" -ne 0 ] && ok || bad "mono: a finding in a pending workspace file must still fail: $OUT"
+grep -Eq '❌ lint \(apps/legacy: lint\)' <<< "$OUT" && ok \
+  || bad "mono: the failing step must name its workspace: $OUT"
+[ "$(receipt_field "$D" status)" = FAIL ] && ok || bad "mono: receipt should be FAIL"
+
+# A root-level pending file brings root's scripts back — and root's delegated
+# lint still may not pin legacy debt on apps/next via a basename.
+D=$(mono_repo mono-root-file)
+printf 'module.exports = {}\n' > "$D/root.config.js"
+printf 'mine\n' > "$D/apps/next/src/stores/picking.js"
+run_precommit "$D"
+[ "$RC" -eq 0 ] && ok || bad "mono: legacy debt must not gate via a basename collision: $OUT"
+grep -Eq '✅ lint \(lint\)' <<< "$OUT" && ok || bad "mono: root's lint must run for a root-level file: $OUT"
+grep -Fq 'not gated' <<< "$OUT" && ok || bad "mono: the ungated root lint failure must be reported: $OUT"
+grep -Eq '✅ build \(apps/next: build\)' <<< "$OUT" && ok || bad "mono: apps/next still builds: $OUT"
+grep -Fq 'Pending files are owned by: (root) apps/next' <<< "$OUT" && ok \
+  || bad "mono: root must be listed among the owners: $OUT"
+
+# Same attribution rule in a plain repo: `src/store/picking.js` in the output is
+# not `src/stores/picking.js` in the change.
+D=$(node_repo node-lint-basename-collision package-lock.json '"lint":"sh ./linter.sh","build":"true","test":"true"')
+mkdir -p "$D/src/stores"
+printf '#!/bin/sh\necho "error: unused at src/store/picking.js:58:33"\nexit 1\n' > "$D/linter.sh"
+printf 'mine\n' > "$D/src/stores/picking.js"
+run_precommit "$D"
+[ "$RC" -eq 0 ] && ok || bad "a bare-basename collision must not attribute debt to the change: $OUT"
+grep -Fq 'not gated' <<< "$OUT" && ok || bad "the ungated failure must still be reported: $OUT"
+
+# ── stop-guard gives up on "same FAIL, same tree, again" — and only then ──────
+#
+# The other half of 2026-10-01: nine refusals of one unchanged FAIL receipt,
+# while the agent was waiting on the user. Two refusals, then the third stop on
+# the identical tree is let through with a warning. Anything that moves — the
+# tree, the receipt — restarts the count; a PASS clears it.
+
+guard_full() {   # $1 = repo dir → GOUT (stdout), GERR (stderr), GRC (exit code)
+  # The transcript lives OUTSIDE the repo: an untracked file inside it would be
+  # part of the tree fingerprint, and writing it after the receipt would make
+  # every tree look changed — which is exactly what the breaker must ignore.
+  local d="$1" transcript="$TMPROOT/$(basename "$1").transcript.jsonl" err
+  err=$(mktemp -t dotai-guard-err)
+  jq -cn --arg p "$d/app.sh" \
+    '{type:"assistant",message:{content:[{type:"tool_use",name:"Write",input:{file_path:$p}}]}}' \
+    > "$transcript"
+  GOUT=$(cd "$d" && jq -cn --arg t "$transcript" '{transcript_path:$t,stop_hook_active:true}' \
+          | bash "$STOP_GUARD" 2>"$err")
+  GRC=$?
+  GERR=$(cat "$err"); rm -f "$err"
+}
+
+# A tracked pipeline that always fails is the simplest unclearable FAIL.
+D=$(new_repo breaker)
+mkdir -p "$D/.claude/commands"
+printf '#!/bin/bash\necho "legacy debt"\nexit 1\n' > "$D/.claude/commands/precommit.sh"
+git -C "$D" add .claude && git -C "$D" commit -qm "failing pipeline"
+printf '#!/bin/bash\necho v1\n' > "$D/app.sh"
+run_precommit "$D"
+[ "$RC" -ne 0 ] && ok || bad "breaker fixture: pipeline should fail"
+COUNTER="$D/.git/dotai-precommit-refusals"
+
+guard_full "$D"
+[ "$GRC" -eq 2 ] && ok || bad "1st refusal must block (rc $GRC): $GERR"
+grep -Fq 'Refusal 1 of 2' <<< "$GERR" && ok || bad "1st refusal must announce the countdown: $GERR"
+guard_full "$D"
+[ "$GRC" -eq 2 ] && ok || bad "2nd refusal must block (rc $GRC): $GERR"
+grep -Fq 'Refusal 2 of 2' <<< "$GERR" && ok || bad "2nd refusal must announce the countdown: $GERR"
+guard_full "$D"
+[ "$GRC" -eq 0 ] && ok || bad "3rd stop on the identical FAIL tree must be let through (rc $GRC): $GERR"
+jq -e '.systemMessage | test("gave up")' <<< "$GOUT" >/dev/null 2>&1 && ok \
+  || bad "the give-up must be loud: a systemMessage saying so, got: $GOUT"
+jq -e '.systemMessage | test("NOT a pass")' <<< "$GOUT" >/dev/null 2>&1 && ok \
+  || bad "the give-up must say the receipt is still FAIL: $GOUT"
+
+# The tree moves → the breaker does not apply and the count is dropped.
+printf '#!/bin/bash\necho v2\n' > "$D/app.sh"
+guard_full "$D"
+[ "$GRC" -eq 2 ] && ok || bad "a FAIL receipt on a changed tree must block again: $GERR"
+grep -Fq 'Refusal' <<< "$GERR" && bad "no countdown when the tree differs from the receipt: $GERR" || ok
+[ ! -f "$COUNTER" ] && ok || bad "the counter must be cleared when the tree moves on"
+
+# Re-running /precommit (new receipt, same FAIL) starts a fresh count.
+run_precommit "$D"
+guard_full "$D"
+[ "$GRC" -eq 2 ] && grep -Fq 'Refusal 1 of 2' <<< "$GERR" && ok \
+  || bad "a fresh FAIL receipt must restart the count at 1: $GERR"
+
+# A PASS clears the counter and allows.
+printf '#!/bin/bash\nexit 0\n' > "$D/.claude/commands/precommit.sh"
+git -C "$D" commit -qam "fix pipeline"
+run_precommit "$D"
+[ "$RC" -eq 0 ] && ok || bad "breaker fixture: fixed pipeline should pass: $OUT"
+guard_full "$D"
+[ "$GRC" -eq 0 ] && ok || bad "PASS on the current tree must allow: $GERR"
+[ ! -f "$COUNTER" ] && ok || bad "a PASS must remove the refusal counter"
+
+# A stale PASS never trips the breaker: re-running is always within reach.
+printf '#!/bin/bash\necho v3\n' > "$D/app.sh"
+for _ in 1 2 3; do guard_full "$D"; done
+[ "$GRC" -eq 2 ] && ok || bad "a stale PASS must still block on the 3rd attempt: $GERR"
+grep -Fq 'gave up' <<< "$GOUT$GERR" && bad "a stale PASS must not trigger the give-up: $GOUT" || ok
+
+# Nor does "never ran": the counter is specific to a FAIL receipt.
+D=$(new_repo breaker-noreceipt)
+printf '#!/bin/bash\necho v1\n' > "$D/app.sh"
+for _ in 1 2 3; do guard_full "$D"; done
+[ "$GRC" -eq 2 ] && ok || bad "no receipt must still block on the 3rd attempt: $GERR"
 
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]
