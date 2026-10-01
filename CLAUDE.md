@@ -209,6 +209,7 @@ Ran but FAIL? Still cannot stop.
 │   └── prompt-template.sh      ← shell template emitter for /prompt (feature|bugfix|refactor skeletons; kept out of .md to avoid loading all templates into context)
 ├── skills/                     ← one dir per skill; all three CLIs require <name>/SKILL.md
 │   ├── git-push/SKILL.md       ← automatic GitLab/GitHub push
+│   ├── gcloud/SKILL.md         ← gcloud/kubectl are NOT installed here: run them via the google/cloud-sdk docker image (creds + kubeconfig under ~/.config/gcloud-cli); Logging / Pub/Sub / Monitoring query templates
 │   ├── ground/SKILL.md         ← /ground pre-implementation grounding check + scope_files: blast-radius contract (enforced by grounding-guard on every edit)
 │   ├── parallel-design-agents/SKILL.md ← multi-agent workflow to explore different design options
 │   ├── preflight/SKILL.md      ← environment verification checklist before starting work

@@ -384,6 +384,7 @@ stdout, ignoring the exit code (see CLAUDE.md §agy Hook Contract).
 | `ship` | Test → L1/L2/L3 review → commit → push → open MR/PR, routing to GitLab or GitHub by inspecting `origin` and calling its REST API with a Keychain token (no forge CLI). |
 | `reviewer-rules` | The **single** source for the L1/L2/L3 review protocol, invoked by `/ground` Step 4.5 and `/ship` Step 2.5. It was previously inlined in both and had already drifted; project-specific rules are discovered from the project (`.claude/reviewer-rules.md` or a `## Reviewer Rules` section) rather than shipped globally. `tests/reviewer-rules.test.sh` fails if project-specific content reappears under `skills/` or `rules/`. |
 | `git-push` | Auto-detect GitLab/GitHub, apply the Keychain token. |
+| `gcloud` | This machine has no native `gcloud`/`kubectl`: every call runs in the `google/cloud-sdk` docker image with `~/.config/gcloud-cli` (login, expires daily) and `~/.config/gcloud-cli/kube` (kubeconfig) mounted. Carries the Logging / Pub/Sub / Monitoring-REST query templates and the dead-letter and `seek` cautions; project IDs stay in each project's own skill. |
 | `preflight` | Environment audit (branch, git state, env vars, MCP). |
 | `parallel-design-agents` | Fan out multiple agents over competing design options, then synthesize. |
 
@@ -749,7 +750,7 @@ When Claude Code restarts, it reads `~/.claude/settings.json` and activates hook
 
 ### Available Skills
 
-`ground`, `ship`, `reviewer-rules`, `git-push`, `preflight`,
+`ground`, `ship`, `reviewer-rules`, `git-push`, `gcloud`, `preflight`,
 `parallel-design-agents` — see §5.
 
 ### Available Rules
