@@ -329,6 +329,14 @@ each turn cost far more than redundant reads do.
   changed afterwards. Run /precommit again", which forces a blind full re-run;
   that happened twice in the usage report. The delta is reporting only, computed
   from the receipt's file manifest, so a bug in it cannot open the gate.
+  **Refusal breaker:** a FAIL receipt whose `tree=` still matches the current
+  tree is refused twice; the third stop on that identical tree is allowed, with
+  a `systemMessage` saying the gate gave up and the receipt still reads FAIL.
+  Keyed to the receipt's content hash in `$GIT_DIR/dotai-precommit-refusals`;
+  any edit or re-run resets it, a PASS removes it. Exists because one unchanged
+  FAIL was refused nine times in a row on 2026-10-01 while the agent was waiting
+  for the user — a gate that cannot be satisfied honestly must stop costing
+  turns. `[unverified]` in a live session.
 - **codex/stop-guard.sh** / **agy/stop-guard.sh** — same contract, different I/O:
   Claude and Codex block with `exit 2`; agy ignores exit codes and needs
   `{"decision":"continue","reason":"…"}` on stdout.
@@ -424,7 +432,10 @@ CLI — see `tests/skills-install.test.sh`.
 (Laravel) → `package.json` + `vite.config.*` (Vue) → `package.json` (Node) →
 `tests/*.test.sh` (shell) → **generic**. Within an arm it resolves the *actual*
 toolchain rather than assuming one: pint vs phpcs (+ host vs container), and
-pnpm/yarn/npm/bun from the lockfile.
+pnpm/yarn/npm/bun from the lockfile. In a monorepo (`workspaces` in the root
+`package.json`) the node/vue arm runs the scripts of the workspaces that **own
+the pending files**, from inside each, and skips root's — a root `lint` that
+delegates into one dirty workspace must not grade a change in another.
 
 ⛔ Never author a precommit script into a repo to give the gate something to
 pass — the override is honoured **only when git tracks it**, precisely because
@@ -576,7 +587,7 @@ for t in tests/*.test.sh; do bash "$t" || echo "FAILED: $t"; done
 
 | Suite | What it pins |
 |---|---|
-| `precommit.test.sh` | generic mode, the tracked-only project override, the receipt fingerprint — recomputed inline by all three `stop-guard.sh` files, so drift fails **closed** — plus the file manifest, its parity across all four copies, and that a blocked stop names the files that changed |
+| `precommit.test.sh` | generic mode, the tracked-only project override, the receipt fingerprint — recomputed inline by all three `stop-guard.sh` files, so drift fails **closed** — plus the file manifest, its parity across all four copies, that a blocked stop names the files that changed, workspace-aware node mode (owning workspaces' scripts run, root's are skipped, no bare-basename attribution), and the refusal breaker (two refusals of one unchanged FAIL, then a loud allow; reset on any change, cleared by a PASS; identical across the three guards) |
 | `branch-guard.test.sh` | the pass-through rules: reads allowed, write-redirects blocked, `git checkout` always allowed even behind global flags |
 | `grounding-guard.test.sh`, `codex-grounding-guard.test.sh` | the `GROUNDING_STATUS` marker contract, the doc-edit exemption, the `scope_files:` contract (in/out of scope, globs, subtrees, loud amendment, stale-cache re-read, fail-open when nothing was declared), and that the Codex and agy ports actually fire under their own payload shapes |
 | `secret-guard.test.sh` | 26 assertions over real payload shapes — **synthetic credentials only**; never put a live one in a fixture, the repo is pushed and git history is permanent |

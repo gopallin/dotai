@@ -225,6 +225,49 @@ receipt_delta_report() {   # $1 = receipt path, $2 = this session's id (may be e
   fi
 }
 
+# ── Refusal breaker ───────────────────────────────────────────────────────────
+#
+# Observed 2026-10-01 (nxl-shipping-client): /precommit wrote status=FAIL for a
+# lint failure in a workspace the change never touched, and this guard then
+# refused nine consecutive stops with the identical message. Nothing moved
+# between them — the agent had already reported the situation and was waiting
+# for the user to choose, blocked on input rather than on work — so each
+# refusal cost a turn and produced nothing. The user broke the loop by hand.
+#
+# A gate that can only be satisfied by sweeping unrelated files into the branch
+# is not gating the change; it is holding the session hostage. So: when the
+# receipt says FAIL *on this exact tree*, and that same receipt has already
+# been refused REFUSAL_LIMIT times, the next stop is allowed with a loud
+# warning. The receipt still reads FAIL — nothing here is a pass. The count is
+# keyed to the receipt's content hash and reset whenever the tree differs from
+# it, so an agent that is actually working (editing, re-running /precommit)
+# never reaches the limit; only "same FAIL, same tree, again" does.
+#
+# Returns 0 = give up; sets REFUSAL_COUNT (this refusal's ordinal, 0 when the
+# breaker does not apply) and REFUSAL_LIMIT.
+#
+# ⚠️ Identical across all three stop-guard.sh files; tests/precommit.test.sh
+# compares them textually.
+precommit_refusal_breaker() {   # $1 = receipt path, $2 = current tree fingerprint
+  local receipt="$1" tree="$2" counter="$1-refusals" key prev n
+  REFUSAL_COUNT=0
+  REFUSAL_LIMIT=2
+  if [ "$(sed -n 's/^status=//p' "$receipt" | head -1)" != "FAIL" ] \
+     || [ "$(sed -n 's/^tree=//p' "$receipt" | head -1)" != "$tree" ]; then
+    rm -f "$counter"
+    return 1
+  fi
+  key=$(shasum -a 256 "$receipt" 2>/dev/null | cut -d' ' -f1)
+  prev=$(sed -n 's/^key=//p' "$counter" 2>/dev/null | head -1)
+  n=$(sed -n 's/^count=//p' "$counter" 2>/dev/null | head -1)
+  [ "$prev" = "$key" ] || n=0
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  n=$(( n + 1 ))
+  printf 'key=%s\ncount=%s\n' "$key" "$n" > "$counter" 2>/dev/null
+  REFUSAL_COUNT=$n
+  [ "$n" -gt "$REFUSAL_LIMIT" ]
+}
+
 if [[ ! -f "$RECEIPT" ]]; then
   echo "⛔ Code changes are pending but /precommit has not run in this repo." >&2
   echo "Pending files this session wrote:" >&2
@@ -254,8 +297,22 @@ CURRENT_TREE=$({
 } | shasum -a 256 | cut -d' ' -f1)
 
 if [[ "$RECEIPT_STATUS" != "PASS" ]]; then
+  if precommit_refusal_breaker "$RECEIPT" "$CURRENT_TREE"; then
+    # Allowed, loudly. With exit 0 a Stop hook's stderr is not surfaced, so the
+    # warning travels as `systemMessage`, which Claude Code shows to the user.
+    # [unverified]: not yet observed rendering in a live session.
+    jq -cn --arg m "⚠️  stop-guard gave up: /precommit reported FAIL on this exact tree and nothing changed across ${REFUSAL_COUNT} stop attempts. The stop is allowed so the decision can return to you. The receipt still says FAIL — this is NOT a pass. (counter: ${RECEIPT}-refusals)" \
+      '{systemMessage:$m}'
+    exit 0
+  fi
   echo "⛔ /precommit ran but did not pass (receipt: status=${RECEIPT_STATUS:-unknown})." >&2
   echo "Fix the failures and run /precommit again until it reports PRECOMMIT_STATUS=PASS." >&2
+  if [[ "$REFUSAL_COUNT" -gt 0 ]]; then
+    echo "" >&2
+    echo "Refusal ${REFUSAL_COUNT} of ${REFUSAL_LIMIT} on this unchanged tree. If the FAIL sits in files" >&2
+    echo "this change never touched and cannot be cleared from here, tell the user so —" >&2
+    echo "the next stop on this exact tree is let through with a warning." >&2
+  fi
   exit 2
 fi
 
@@ -289,4 +346,5 @@ fi
 # don't sprinkle "should"). See docs/ABLATION.md for the same call on
 # complexity-guard.sh.
 
+rm -f "${RECEIPT}-refusals"   # a PASS on this tree ends any refusal streak
 exit 0

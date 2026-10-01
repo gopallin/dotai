@@ -363,6 +363,13 @@ Tech stack detection logic for `/precommit`:
 - Has `artisan` → Laravel
 - Has `package.json` + `vite.config.*` → Vue
 - Has `package.json` → Node.js
+  - Runner from the lockfile; only scripts the `package.json` declares run.
+  - **`workspaces` declared → the scripts come from the workspaces that own the
+    pending files**, run from inside each; root's scripts run only for files
+    outside every workspace. A workspace with neither build nor test says so;
+    if none ran anything the run degrades to generic mode. Lint failures are
+    attributed by repo path, workspace-relative path, or `parent/basename` —
+    never a bare basename.
 - Has `tests/*.test.sh` → shell
 - None of the above → **generic**: conflict markers, parse errors (`*.sh`, `*.json`,
   `*.py`) and credential shapes across the pending files. No build, no tests,
@@ -372,7 +379,7 @@ Tech stack detection logic for `/precommit`:
 **Scope contract & stale-receipt delta — status `[unverified]`.** Both landed
 2026-09-07 and are exercised by their suites against real payloads
 (`tests/grounding-guard.test.sh` 31 assertions, including the Codex and agy ports
-driven with their own payload shapes; `tests/precommit.test.sh` 102), but **neither
+driven with their own payload shapes; `tests/precommit.test.sh` 164), but **neither
 has been observed firing inside a live session** — registration and a passing
 suite are not the same evidence, which is the lesson of the retired
 `complexity-guard`. To confirm, after `bash install.sh` and a restart:
@@ -386,6 +393,27 @@ suite are not the same evidence, which is the lesson of the retired
 #    expect the block to name that file under "Changed since that PASS:".
 ```
 
+**Workspace-aware node mode & the stop-guard refusal breaker — status
+`[unverified]`.** Both landed 2026-10-01 after nxl-shipping-client (a monorepo
+whose root `lint` delegates to `apps/legacy`): a change confined to `apps/next`
+was graded by legacy's 375 pre-existing lint errors, a bare-basename collision
+(`picking.js`) pinned one on the change, the receipt went FAIL with no honest
+way to clear it, and stop-guard refused **nine** consecutive stops while the
+agent was waiting on the user. Now `/precommit` runs the owning workspaces'
+scripts, and every `stop-guard.sh` gives up after two refusals of the *same*
+FAIL receipt on the *same* tree — the third stop is allowed with a warning that
+says the receipt still reads FAIL (counter: `$GIT_DIR/dotai-precommit-refusals`,
+reset by any tree or receipt change, removed by a PASS). Exercised by
+`tests/precommit.test.sh`; not yet observed in a live session. To confirm:
+
+```bash
+# 1. in a monorepo, edit one workspace only, run /precommit —
+#    expect "Root scripts skipped" and steps labelled "(apps/<ws>: build)".
+# 2. with a FAIL receipt nothing can clear, let the session try to stop 3× —
+#    expect "Refusal 1 of 2", "Refusal 2 of 2", then a stop with the
+#    "stop-guard gave up" systemMessage (Claude) / a plain allow (Codex, agy).
+```
+
 ⛔ **Never write a precommit script (or a Makefile, or a test runner) into a repo
 to give the gate something to pass.** On 2026-08-21 detection failed in a
 stackless repo, `/precommit` returned FAIL, stop-guard refused the stop, and the
@@ -393,10 +421,11 @@ agent authored `.claude/commands/precommit.sh` in that repo and graded its own
 work with it. Generic mode is the fallback; the override is honoured only when
 git tracks it, so a script invented mid-session is ignored with a warning.
 
-`tests/precommit.test.sh` (102 assertions) pins generic mode, the tracked-only
-override rule, and the receipt fingerprint — which all three `stop-guard.sh`
-files recompute inline, so a drift there fails **closed**: every PASS mismatches
-and the gate blocks forever. It also pins the receipt's **file manifest**
+`tests/precommit.test.sh` (164 assertions) pins generic mode, the tracked-only
+override rule, workspace-aware node mode, the refusal breaker (and its textual
+parity across the three guards), and the receipt fingerprint — which all three
+`stop-guard.sh` files recompute inline, so a drift there fails **closed**: every
+PASS mismatches and the gate blocks forever. It also pins the receipt's **file manifest**
 (`file=<sha256>\t<path>` per pending file, plus `ts=`/`session=`/`branch=`),
 which is what lets a blocked stop name the files that moved since the PASS
 instead of demanding a blind full re-run. The manifest is reporting only — the

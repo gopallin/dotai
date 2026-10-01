@@ -212,9 +212,56 @@ receipt_delta_report() {   # $1 = receipt path, $2 = this session's id (may be e
   fi
 }
 
+# ── Refusal breaker ───────────────────────────────────────────────────────────
+#
+# Observed 2026-10-01 (nxl-shipping-client): /precommit wrote status=FAIL for a
+# lint failure in a workspace the change never touched, and this guard then
+# refused nine consecutive stops with the identical message. Nothing moved
+# between them — the agent had already reported the situation and was waiting
+# for the user to choose, blocked on input rather than on work — so each
+# refusal cost a turn and produced nothing. The user broke the loop by hand.
+#
+# A gate that can only be satisfied by sweeping unrelated files into the branch
+# is not gating the change; it is holding the session hostage. So: when the
+# receipt says FAIL *on this exact tree*, and that same receipt has already
+# been refused REFUSAL_LIMIT times, the next stop is allowed with a loud
+# warning. The receipt still reads FAIL — nothing here is a pass. The count is
+# keyed to the receipt's content hash and reset whenever the tree differs from
+# it, so an agent that is actually working (editing, re-running /precommit)
+# never reaches the limit; only "same FAIL, same tree, again" does.
+#
+# Returns 0 = give up; sets REFUSAL_COUNT (this refusal's ordinal, 0 when the
+# breaker does not apply) and REFUSAL_LIMIT.
+#
+# ⚠️ Identical across all three stop-guard.sh files; tests/precommit.test.sh
+# compares them textually.
+precommit_refusal_breaker() {   # $1 = receipt path, $2 = current tree fingerprint
+  local receipt="$1" tree="$2" counter="$1-refusals" key prev n
+  REFUSAL_COUNT=0
+  REFUSAL_LIMIT=2
+  if [ "$(sed -n 's/^status=//p' "$receipt" | head -1)" != "FAIL" ] \
+     || [ "$(sed -n 's/^tree=//p' "$receipt" | head -1)" != "$tree" ]; then
+    rm -f "$counter"
+    return 1
+  fi
+  key=$(shasum -a 256 "$receipt" 2>/dev/null | cut -d' ' -f1)
+  prev=$(sed -n 's/^key=//p' "$counter" 2>/dev/null | head -1)
+  n=$(sed -n 's/^count=//p' "$counter" 2>/dev/null | head -1)
+  [ "$prev" = "$key" ] || n=0
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  n=$(( n + 1 ))
+  printf 'key=%s\ncount=%s\n' "$key" "$n" > "$counter" 2>/dev/null
+  REFUSAL_COUNT=$n
+  [ "$n" -gt "$REFUSAL_LIMIT" ]
+}
+
 # ── Layer 2: Did /precommit actually run, and pass, on THIS tree? ─────────────
 # We check the receipt.
 GIT_DIR=$(git rev-parse --git-dir 2>/dev/null || echo "")
+RECEIPT=""
+CURRENT_TREE=""
+REFUSAL_COUNT=0
+REFUSAL_LIMIT=2
 if [[ -n "$GIT_DIR" ]]; then
   RECEIPT="${GIT_DIR}/dotai-precommit"
   if [[ -f "$RECEIPT" ]]; then
@@ -233,6 +280,7 @@ if [[ -n "$GIT_DIR" ]]; then
     } | shasum -a 256 | cut -d' ' -f1)
     
     if [[ "$RECEIPT_STATUS" == "PASS" && "$RECEIPT_TREE" == "$CURRENT_TREE" ]]; then
+      rm -f "${RECEIPT}-refusals"   # a PASS on this tree ends any refusal streak
       allow
     fi
 
@@ -267,4 +315,18 @@ Run /precommit again."
   block "$_reason"
 fi
 
-block "Code was changed but quality checks did not pass. Run /precommit and confirm PRECOMMIT_STATUS=PASS appears in the output before stopping."
+# Give up only for "same FAIL receipt, same tree, again" — see the breaker's
+# comment. It sits alongside the executionNum brake above: that one caps
+# refusals per Stop cycle, this one caps refusals of one unchanged FAIL. agy
+# shows the model only `reason`, so the countdown below is the notice it gets.
+if [[ -n "$RECEIPT" && -f "$RECEIPT" ]] && precommit_refusal_breaker "$RECEIPT" "$CURRENT_TREE"; then
+  allow
+fi
+
+_reason="Code was changed but quality checks did not pass. Run /precommit and confirm PRECOMMIT_STATUS=PASS appears in the output before stopping."
+if [[ "$REFUSAL_COUNT" -gt 0 ]]; then
+  _reason="${_reason}
+
+Refusal ${REFUSAL_COUNT} of ${REFUSAL_LIMIT} on this unchanged tree. If the FAIL sits in files this change never touched and cannot be cleared from here, tell the user so — the next stop on this exact tree is let through. The receipt will still say FAIL; that is not a pass."
+fi
+block "$_reason"

@@ -15,8 +15,11 @@ and runs the appropriate lint → build → test sequence.
 
 2. Otherwise detect the tech stack from the current directory:
    - `artisan` present → **Laravel**: `./vendor/bin/pint` → `php artisan test`
-   - `package.json` + `vite.config.*` → **Vue**: `yarn lint:fix` → `yarn build` → `yarn test:unit`
-   - `package.json` only → **Node.js**: `yarn lint:fix` → `yarn build` → `yarn test:unit`
+   - `package.json` + `vite.config.*` → **Vue**, `package.json` only → **Node.js**:
+     runner from the lockfile (pnpm/yarn/npm/bun), then the declared
+     `lint`/`typecheck` → `build` → `test:unit`/`test` scripts. With
+     `workspaces` declared, the scripts come from the workspaces that own the
+     pending files, run from inside each; root's run only for root-level files.
    - `tests/*.test.sh` present → **shell**: `bash -n` on every `*.sh` → run every test file
    - none of the above → **generic** (see below)
 
