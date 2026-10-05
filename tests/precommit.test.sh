@@ -836,5 +836,78 @@ printf '#!/bin/bash\necho v1\n' > "$D/app.sh"
 for _ in 1 2 3; do guard_full "$D"; done
 [ "$GRC" -eq 2 ] && ok || bad "no receipt must still block on the 3rd attempt: $GERR"
 
+# ── Cross-repo: every repository the session wrote into needs its own PASS ──
+#
+# 2026-10-05: a session in nxl-shipping-client edited nxl-shipping-server files
+# and this guard dropped them as "written outside this repo", so the server
+# change was committed with no /precommit at all. Writes are now grouped by the
+# repository that owns them; the cwd repo is graded first, then each other one
+# against ITS receipt, and a block names the repo the fix must be run from.
+
+guard_multi() {   # $1 = cwd for the guard; $2.. = files the "session" wrote → GERR, GRC
+  local cwd="$1"; shift
+  local transcript="$TMPROOT/multi.transcript.jsonl" err
+  : > "$transcript"
+  for f in "$@"; do
+    jq -cn --arg p "$f" \
+      '{type:"assistant",message:{content:[{type:"tool_use",name:"Write",input:{file_path:$p}}]}}' \
+      >> "$transcript"
+  done
+  err=$(mktemp -t dotai-guard-err)
+  (cd "$cwd" && jq -cn --arg t "$transcript" '{transcript_path:$t,stop_hook_active:true}' \
+     | bash "$STOP_GUARD" >/dev/null 2>"$err")
+  GRC=$?
+  GERR=$(cat "$err"); rm -f "$err"
+}
+
+A=$(new_repo xrepo-a)
+B=$(new_repo xrepo-b)
+printf '#!/bin/bash\necho a\n' > "$A/app.sh"
+printf '#!/bin/bash\necho b\n' > "$B/app.sh"
+
+guard_multi "$A" "$A/app.sh" "$B/app.sh"
+[ "$GRC" -eq 2 ] && ok || bad "no receipt anywhere: must block (rc $GRC)"
+grep -Fq "$B" <<< "$GERR" && bad "cwd repo is graded first; its own refusal must not name the sibling: $GERR" || ok
+
+run_precommit "$A"
+[ "$RC" -eq 0 ] && ok || bad "xrepo fixture: A should pass: $OUT"
+guard_multi "$A" "$A/app.sh" "$B/app.sh"
+[ "$GRC" -eq 2 ] && ok || bad "A passed but B has no receipt: must still block (rc $GRC): $GERR"
+grep -Fq "$B" <<< "$GERR" && ok || bad "the block must name the repository that still needs /precommit: $GERR"
+grep -Fq "cd $B" <<< "$GERR" && ok || bad "the block must say to run /precommit from inside that repo: $GERR"
+
+run_precommit "$B"
+[ "$RC" -eq 0 ] && ok || bad "xrepo fixture: B should pass: $OUT"
+guard_multi "$A" "$A/app.sh" "$B/app.sh"
+[ "$GRC" -eq 0 ] && ok || bad "both repos hold a PASS on their current trees: must allow (rc $GRC): $GERR"
+
+# A later edit in the sibling expires ITS receipt, and only its.
+printf '#!/bin/bash\necho b2\n' > "$B/app.sh"
+guard_multi "$A" "$A/app.sh" "$B/app.sh"
+[ "$GRC" -eq 2 ] && ok || bad "B's tree moved after its PASS: must block (rc $GRC)"
+grep -Fq "$B" <<< "$GERR" && ok || bad "the stale block must name the sibling repo: $GERR"
+grep -Fq 'app.sh' <<< "$GERR" && ok || bad "the stale block must still name the file that moved: $GERR"
+
+# The session's cwd need not be a repo at all for the sibling to be graded.
+mkdir -p "$TMPROOT/nowhere"
+guard_multi "$TMPROOT/nowhere" "$B/app.sh"
+[ "$GRC" -eq 2 ] && ok || bad "a write into a repo from a non-repo cwd must still be graded (rc $GRC)"
+
+# Scratch files outside every repository are still ignored.
+printf 'x\n' > "$TMPROOT/scratch.sh"
+run_precommit "$B"
+guard_multi "$A" "$A/app.sh" "$B/app.sh" "$TMPROOT/scratch.sh"
+[ "$GRC" -eq 0 ] && ok || bad "a scratch file outside every repo must not be graded (rc $GRC): $GERR"
+
+# The Codex and agy copies must carry the same grouping, not just the Claude one.
+OREF=$(extract_fn "$ROOT/hooks/claude/stop-guard.sh" owning_root)
+[ -n "$OREF" ] && ok || bad "could not extract owning_root() from claude/stop-guard.sh"
+for g in codex agy; do
+  grep -q '^gate_repo()' "$ROOT/hooks/$g/stop-guard.sh" \
+    && ok || bad "$g/stop-guard.sh lacks the per-repository grouping (gate_repo)"
+  [ "$(extract_fn "$ROOT/hooks/$g/stop-guard.sh" owning_root)" = "$OREF" ] \
+    && ok || bad "$g/stop-guard.sh owning_root() drifted from claude's"
+done
+
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

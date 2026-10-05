@@ -4,53 +4,95 @@
 # Prevents accidental edits/commits/pushes to master/main branches.
 # Triggered on PreToolUse for Bash and Edit/Write/MultiEdit tools.
 #
-# Strategy: Check current git branch (reliable) rather than parsing the command
-# (which may not be available in every hook context).
+# Strategy: Check the current git branch (reliable) rather than parsing the
+# command (which may not be available in every hook context). For a FILE edit
+# the branch that matters is the one of the repository that OWNS the file —
+# not cwd's. A session in repo A editing a file in sibling repo B used to be
+# judged by A's branch, so B sitting on master was never protected (2026-10-05,
+# the same cwd-only blind spot grounding-guard and stop-guard had). Bash
+# commands are still judged by cwd's branch: that is where they run.
 #
 # Tool input is read from stdin (Claude Code's PreToolUse JSON: {tool_input:{...}})
 # with the legacy CLAUDE_TOOL_INPUT env var as a fallback.
 #
 
-# Only check if we're in a git repository
-if ! git rev-parse --git-dir > /dev/null 2>&1; then
-    exit 0
+# --- Resolve the tool input (Bash command and/or Edit/Write file_path) ---
+#
+# Claude Code delivers the PreToolUse payload as JSON on stdin; older/other
+# CLIs may set the legacy CLAUDE_TOOL_INPUT env var instead. Read stdin FIRST
+# (the authoritative source) and fall back to the env var only when stdin is
+# empty. Parse `.tool_input // .` so we tolerate both the full event shape
+# ({tool_input:{...}}) and a bare tool_input object. This parse MUST succeed
+# or the safe-command whitelist below cannot fire — which previously trapped
+# the agent on master (even `git checkout`, the documented escape, blocked)
+# because the old code read $CLAUDE_TOOL_INPUT (often the full event) and ran
+# `jq '.command'` against it, always yielding empty.
+#
+# Parsed BEFORE the branch check, because for a file edit the branch to check
+# depends on which repository the file is in.
+EXECUTING_CMD=""
+FILE_PATH=""
+if command -v jq >/dev/null 2>&1; then
+    STDIN_JSON=$(cat 2>/dev/null)
+    TOOL_INPUT=""
+    if [ -n "$STDIN_JSON" ]; then
+        TOOL_INPUT=$(printf '%s' "$STDIN_JSON" | jq -c '.tool_input // .' 2>/dev/null)
+    fi
+    if [ -z "$TOOL_INPUT" ] || [ "$TOOL_INPUT" = "null" ]; then
+        if [ -n "$CLAUDE_TOOL_INPUT" ]; then
+            TOOL_INPUT=$(printf '%s' "$CLAUDE_TOOL_INPUT" | jq -c '.tool_input // .' 2>/dev/null)
+        fi
+    fi
+    if [ -n "$TOOL_INPUT" ] && [ "$TOOL_INPUT" != "null" ]; then
+        EXECUTING_CMD=$(printf '%s' "$TOOL_INPUT" | jq -r '.command // empty' 2>/dev/null)
+        FILE_PATH=$(printf '%s' "$TOOL_INPUT" | jq -r '.file_path // empty' 2>/dev/null)
+    fi
 fi
 
-# Get current branch
-CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+# --- Which repository's branch is being judged? ---
+#
+# For a file edit: the repository that contains the target path. Both sides are
+# resolved to PHYSICAL paths. On macOS the same directory is reachable through
+# symlinks (/tmp → /private/tmp, /var → /private/var, and mktemp -d hands back
+# the symlinked form), so a textual prefix test would misfile real in-repo
+# paths and fail OPEN — the dangerous direction. The target usually does not
+# exist yet (Write creates it), so resolution walks up to the deepest existing
+# ancestor directory and re-appends the remainder.
+#
+# FILE_ROOT is empty when the path is outside every working tree (scratchpad,
+# $HOME) — such a write cannot dirty any branch, cannot be committed, and
+# cannot enter history, so it passes below. Observed false positive 2026-08-19:
+# a write to the session scratchpad under /private/tmp/... was blocked merely
+# because cwd happened to be a repo sitting on main.
+FILE_ROOT=""
+if [ -n "$FILE_PATH" ]; then
+    case "$FILE_PATH" in
+        */.git/*|*/.git|.git/*|.git) ;;   # handled by the pass-through below
+        *)
+            FILE_ABS="$FILE_PATH"
+            case "$FILE_ABS" in /*) ;; *) FILE_ABS="$PWD/$FILE_ABS" ;; esac
+            SCAN_DIR=$(dirname "$FILE_ABS")
+            while [ ! -d "$SCAN_DIR" ] && [ "$SCAN_DIR" != "/" ] && [ "$SCAN_DIR" != "." ]; do
+                SCAN_DIR=$(dirname "$SCAN_DIR")
+            done
+            SCAN_DIR_P=$(cd "$SCAN_DIR" 2>/dev/null && pwd -P) || SCAN_DIR_P="$SCAN_DIR"
+            FILE_ROOT=$(git -C "$SCAN_DIR_P" rev-parse --show-toplevel 2>/dev/null) || FILE_ROOT=""
+            ;;
+    esac
+fi
+
+if [ -n "$FILE_ROOT" ]; then
+    CURRENT_BRANCH=$(git -C "$FILE_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)
+else
+    # Bash commands, and files outside every repo, are judged by cwd.
+    if ! git rev-parse --git-dir > /dev/null 2>&1; then
+        exit 0
+    fi
+    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+fi
 
 # Allow all branches except master/main
 if [ "$CURRENT_BRANCH" = "master" ] || [ "$CURRENT_BRANCH" = "main" ]; then
-    # --- Resolve the tool input (Bash command and/or Edit/Write file_path) ---
-    #
-    # Claude Code delivers the PreToolUse payload as JSON on stdin; older/other
-    # CLIs may set the legacy CLAUDE_TOOL_INPUT env var instead. Read stdin FIRST
-    # (the authoritative source) and fall back to the env var only when stdin is
-    # empty. Parse `.tool_input // .` so we tolerate both the full event shape
-    # ({tool_input:{...}}) and a bare tool_input object. This parse MUST succeed
-    # or the safe-command whitelist below cannot fire — which previously trapped
-    # the agent on master (even `git checkout`, the documented escape, blocked)
-    # because the old code read $CLAUDE_TOOL_INPUT (often the full event) and ran
-    # `jq '.command'` against it, always yielding empty.
-    EXECUTING_CMD=""
-    FILE_PATH=""
-    if command -v jq >/dev/null 2>&1; then
-        STDIN_JSON=$(cat 2>/dev/null)
-        TOOL_INPUT=""
-        if [ -n "$STDIN_JSON" ]; then
-            TOOL_INPUT=$(printf '%s' "$STDIN_JSON" | jq -c '.tool_input // .' 2>/dev/null)
-        fi
-        if [ -z "$TOOL_INPUT" ] || [ "$TOOL_INPUT" = "null" ]; then
-            if [ -n "$CLAUDE_TOOL_INPUT" ]; then
-                TOOL_INPUT=$(printf '%s' "$CLAUDE_TOOL_INPUT" | jq -c '.tool_input // .' 2>/dev/null)
-            fi
-        fi
-        if [ -n "$TOOL_INPUT" ] && [ "$TOOL_INPUT" != "null" ]; then
-            EXECUTING_CMD=$(printf '%s' "$TOOL_INPUT" | jq -r '.command // empty' 2>/dev/null)
-            FILE_PATH=$(printf '%s' "$TOOL_INPUT" | jq -r '.file_path // empty' 2>/dev/null)
-        fi
-    fi
-
     # --- Bash write-command block (blacklist, NOT whitelist) ---
     #
     # This used to be a 14-prefix read-only WHITELIST
@@ -168,41 +210,12 @@ if [ "$CURRENT_BRANCH" = "master" ] || [ "$CURRENT_BRANCH" = "main" ]; then
             */.git/*|*/.git|.git/*|.git) exit 0 ;;
         esac
 
-        # A path OUTSIDE this repo's working tree cannot dirty the branch, cannot be
-        # committed, and cannot enter history — exactly the argument already accepted
-        # for `.git/` above. Observed false positive 2026-08-19: a write to the
-        # session scratchpad under /private/tmp/... was blocked merely because cwd
-        # happened to be a repo sitting on main. Blocking that protects nothing; the
-        # branch has no relationship to the file.
-        #
-        # Both sides are resolved to PHYSICAL paths before comparing. On macOS the
-        # same directory is reachable through symlinks (/tmp → /private/tmp,
-        # /var → /private/var, and mktemp -d hands back the symlinked form), so a
-        # textual prefix test would miss real in-repo paths and fail OPEN — the
-        # dangerous direction. The target usually does not exist yet (Write creates
-        # it), so resolution walks up to the deepest existing ancestor directory and
-        # re-appends the remainder.
-        #
-        # If the working tree cannot be located (bare repo, or cwd inside .git), fall
-        # through to the block below. Refusing to guess is safer than allowing.
-        REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-        if [ -n "$REPO_ROOT" ] && REPO_ROOT_P=$(cd "$REPO_ROOT" 2>/dev/null && pwd -P); then
-            FILE_ABS="$FILE_PATH"
-            case "$FILE_ABS" in /*) ;; *) FILE_ABS="$PWD/$FILE_ABS" ;; esac
-            SCAN_DIR=$(dirname "$FILE_ABS")
-            SCAN_REST=$(basename "$FILE_ABS")
-            while [ ! -d "$SCAN_DIR" ] && [ "$SCAN_DIR" != "/" ] && [ "$SCAN_DIR" != "." ]; do
-                SCAN_REST="$(basename "$SCAN_DIR")/$SCAN_REST"
-                SCAN_DIR=$(dirname "$SCAN_DIR")
-            done
-            SCAN_DIR_P=$(cd "$SCAN_DIR" 2>/dev/null && pwd -P) || SCAN_DIR_P="$SCAN_DIR"
-            case "$SCAN_DIR_P/$SCAN_REST" in
-                "$REPO_ROOT_P"/*) ;;   # inside the working tree — keep blocking
-                *) exit 0 ;;           # outside — cannot affect this branch
-            esac
-        fi
+        # Outside every working tree — cannot affect any branch (see FILE_ROOT).
+        [ -n "$FILE_ROOT" ] || exit 0
 
         BLOCK_REASON="edits a non-documentation file ($FILE_PATH)"
+        [ "$FILE_ROOT" != "$(git rev-parse --show-toplevel 2>/dev/null)" ] \
+            && BLOCK_REASON="$BLOCK_REASON — that file's repository is $FILE_ROOT, which sits on '$CURRENT_BRANCH'"
     fi
     # --------------------------------------
 
@@ -213,6 +226,7 @@ Current branch is '$CURRENT_BRANCH', and this command ${BLOCK_REASON:-modifies t
 
 Read-only commands are allowed here — only writes are blocked. To proceed:
 1. git checkout -b feature/your-feature   (always permitted, even on master/main)
+   — for a file in another repository:  git -C <that repo> checkout -b feature/your-feature
 2. Make changes there
 3. Push and open a PR
 

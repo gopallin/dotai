@@ -218,8 +218,8 @@ Ran but FAIL? Still cannot stop.
 ├── hooks/
 │   ├── hooks.json              ← hook event declarations
 │   ├── claude/
-│   │   ├── stop-guard.sh       ← Claude Code Stop event hook
-│   │   ├── grounding-guard.sh  ← Claude PreToolUse hook (gate 1: blocks first un-grounded edit; gate 2: blocks every later edit outside /ground's scope_files: contract)
+│   │   ├── stop-guard.sh       ← Claude Code Stop event hook (groups the session's writes by owning repo; every repo needs its own PASS receipt)
+│   │   ├── grounding-guard.sh  ← Claude PreToolUse hook (gate 1: blocks first un-grounded edit; gate 2: blocks every later edit outside /ground's scope_files: contract; repo resolved from the FILE, first edit into another repo refused once with that repo's rules; reads markers from conversation text only)
 │   │   ├── context-budget-guard.sh ← Claude PreToolUse hook (advisory: reminds to /clear when session grows large)
 │   │   ├── handoff-reminder.sh ← Claude SessionStart hook (after /clear: offer /resume+/handoff or transcript rebuild)
 │   │   ├── secret-redact.sh    ← Claude PostToolUse hook (rewrites Bash output to scrub credentials before the model/transcript sees them)
@@ -236,7 +236,7 @@ Ran but FAIL? Still cannot stop.
 │   │   ├── context-budget-guard.sh ← agy PreInvocation advisory (injects an ephemeralMessage)
 │   │   └── shared-guard-adapter.sh ← translates agy's JSON contract ↔ the shared guards' exit codes
 │   └── shared/
-│       ├── branch-guard.sh     ← blocks WRITE commands + non-doc edits on master/main (reads pass)
+│       ├── branch-guard.sh     ← blocks WRITE commands + non-doc edits on master/main (reads pass); a file edit is judged by the branch of the repo that OWNS the file, not cwd's
 │       ├── glab-guard.sh       ← blocks the `glab` CLI, redirects to curl + $GITLAB_TOKEN
 │       └── secret-guard.sh     ← blocks `security dump-keychain` (the one dump redaction cannot cover)
 ├── rules/                      ← installed to ~/.claude/dotai-rules/, NOT ~/.claude/rules/
@@ -378,7 +378,7 @@ Tech stack detection logic for `/precommit`:
 
 **Scope contract & stale-receipt delta — status `[unverified]`.** Both landed
 2026-09-07 and are exercised by their suites against real payloads
-(`tests/grounding-guard.test.sh` 31 assertions, including the Codex and agy ports
+(`tests/grounding-guard.test.sh` 52 assertions, including the Codex and agy ports
 driven with their own payload shapes; `tests/precommit.test.sh` 164), but **neither
 has been observed firing inside a live session** — registration and a passing
 suite are not the same evidence, which is the lesson of the retired
@@ -414,6 +414,53 @@ reset by any tree or receipt change, removed by a PASS). Exercised by
 #    "stop-guard gave up" systemMessage (Claude) / a plain allow (Codex, agy).
 ```
 
+**Cross-repo gates — the repo is the file's, not cwd's — status `[unverified]`
+for the new paths, with two parts `[probed]`.** Landed 2026-10-05 after
+nxl-shipping-server MR !891 was built from an nxl-shipping-client session: the
+server's CLAUDE.md (no `app(Foo::class)`), its reviewer rules, its memory and
+its CI pre-check all lived on the other tree, and every dotai gate waved the
+server files through as "outside the working tree" — no grounding, no scope,
+no `/precommit`, and branch-guard judged cwd's branch rather than the
+server's. Blocking cross-repo edits was rejected (one feature spans frontend
+and backend), so instead:
+
+- `grounding-guard` (all three CLIs) resolves the owning repo from the file's
+  path; a foreign file is declared as `../other/…` or absolute (never by a
+  pattern relative to its own root), and the **first** edit into a foreign repo
+  is refused once with that repo's `CLAUDE.md` + `.claude/reviewer-rules.md`
+  on the verified channel (exit 2 / `deny` reason). PreToolUse
+  `additionalContext` is documented but was not relied on.
+- `stop-guard` (all three) groups the session's writes by owning repo and
+  requires each repo's own PASS on its own tree; a block names the repo and
+  the `cd <root> && bash …/precommit.sh` to run.
+- `branch-guard` judges a file edit by the branch of the repo that owns it.
+- `/ship` builds the MR/PR body from `.gitlab/merge_request_templates/Default.md`
+  or `.github/pull_request_template.md` when present (the forge applies them
+  only in its web UI), and says one `/ship` ships one repo.
+
+Two things were **observed live** in the dotai session that built this, so
+they are `[probed]`, not assumed: (1) gate 2 of `grounding-guard` fired for
+real ("Outside the scope you declared") — the first live sighting, upgrading
+the 2026-09-07 `[unverified]` above; (2) its "declared scope" listing held ~40
+junk patterns lifted from tool results, and its own refusal text (which names
+`GROUNDING_STATUS=PASS`) satisfied gate 1 on the next attempt — the same
+self-satisfying loop stop-guard had already closed for `PRECOMMIT_STATUS`. The
+Claude guard now reads markers from the conversation's own text blocks (the
+assistant's and the user's); Codex/agy still scan the raw transcript. Also
+`[probed]`: Claude Code appends a response's blocks to the JSONL only after
+its tool call runs, and two assistant text blocks carrying the declaration
+were never written at all — the session was unblocked by the user pasting the
+declaration, which is why user text counts. Suites: `tests/grounding-guard.test.sh`
+(52), `tests/precommit.test.sh` (182), `tests/branch-guard.test.sh` (70),
+`tests/ship-forge-detect.test.sh` (31). To confirm the new paths live:
+
+```bash
+# 1. from repo A on a feature branch, /ground declaring  scope_files: ../B/app/x.php,
+#    then edit ../B/app/x.php — expect ONE refusal carrying B's CLAUDE.md, then the retry passes.
+# 2. let the session stop — expect stop-guard to name B and "Run /precommit THERE".
+# 3. with B on master, edit a file in B from A — expect branch-guard's block naming B.
+```
+
 ⛔ **Never write a precommit script (or a Makefile, or a test runner) into a repo
 to give the gate something to pass.** On 2026-08-21 detection failed in a
 stackless repo, `/precommit` returned FAIL, stop-guard refused the stop, and the
@@ -421,7 +468,7 @@ agent authored `.claude/commands/precommit.sh` in that repo and graded its own
 work with it. Generic mode is the fallback; the override is honoured only when
 git tracks it, so a script invented mid-session is ignored with a warning.
 
-`tests/precommit.test.sh` (164 assertions) pins generic mode, the tracked-only
+`tests/precommit.test.sh` (182 assertions) pins generic mode, the tracked-only
 override rule, workspace-aware node mode, the refusal breaker (and its textual
 parity across the three guards), and the receipt fingerprint — which all three
 `stop-guard.sh` files recompute inline, so a drift there fails **closed**: every

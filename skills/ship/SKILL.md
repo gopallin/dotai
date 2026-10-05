@@ -41,6 +41,12 @@ git rev-parse --abbrev-ref HEAD
 - ❌ **If on `main` or `master`**: Stop immediately. Inform the user that `/ship` cannot be executed on primary branches.
 - ✅ **If on a feature branch**: Proceed to Step 2.
 
+**One `/ship` ships one repository — the cwd one.** Every step below runs
+`git` in cwd. If this session also wrote into a sibling repository (a feature
+that spans frontend and backend), that repo gets its own `/ship`, run from
+inside it, and `stop-guard` will refuse the stop until it also holds a
+`/precommit` PASS. Do not try to describe both repos' changes in one MR.
+
 ---
 
 ### Step 2: Run Tests
@@ -183,6 +189,46 @@ TARGET_BRANCH="${TARGET_BRANCH:-main}"
 echo "forge=$FORGE_HOST project=$PROJECT_PATH branch=$BRANCH → $TARGET_BRANCH"
 ```
 
+**Build the description from the repo's own template — before routing.** The
+forge applies `.gitlab/merge_request_templates/Default.md` (GitLab) or
+`.github/pull_request_template.md` (GitHub) **only in its web UI**. An MR/PR
+opened through the API gets exactly the body you send. nxl-shipping-server
+MR !891 (2026-10-05) failed its CI pre-check on the first pipeline for this
+reason: the check requires filled `## 說明` / `## 原因` sections and `/ship` had
+sent a `## Summary` body.
+
+```bash
+TEMPLATE=""
+for t in .gitlab/merge_request_templates/Default.md \
+         .github/pull_request_template.md .github/PULL_REQUEST_TEMPLATE.md \
+         pull_request_template.md PULL_REQUEST_TEMPLATE.md \
+         docs/pull_request_template.md; do
+  [ -f "$t" ] && { TEMPLATE="$t"; break; }
+done
+# A GitLab repo with templates but no Default.md: take the only/first one.
+[ -z "$TEMPLATE" ] && [ -d .gitlab/merge_request_templates ] && \
+  TEMPLATE=$(ls .gitlab/merge_request_templates/*.md 2>/dev/null | head -1)
+BODY_FILE=$(mktemp -t ship-body)
+echo "template=${TEMPLATE:-none}  body=$BODY_FILE"
+```
+
+Then write `$BODY_FILE`:
+
+- **Template found** → keep every heading **verbatim** and in order. Fill each
+  section with real content from the diff and the commit body; delete the
+  `<!-- … -->` placeholder comments (a section whose only content is a comment
+  reads as *unfilled* to a template gate); tick the checkboxes that apply
+  (`- [x]`); a section with nothing to say gets an explicit `None` line, never
+  an empty body. Write it in the template's language.
+- **No template** → fall back to `## Summary` followed by the commit body.
+- Either way, end with `---` and `*Shipped via /ship with L1/L2/L3 verification*`.
+
+Show the body to the user together with the target-branch question above, so
+a wrong section is fixed before it is posted, not after CI fails. If the repo's
+`CLAUDE.md` or reviewer rules name a CI pre-check that reads the description
+(for example one driven by `CI_MERGE_REQUEST_DESCRIPTION`), run it against
+`$BODY_FILE` now — that is the gate the pipeline will apply.
+
 Then route on `$FORGE_HOST`:
 
 ```bash
@@ -220,14 +266,14 @@ case "$FORGE_HOST" in
   *)          API_BASE="https://$FORGE_HOST/api/v3" ;;
 esac
 
-BODY=$(printf '## Summary\n\n%s\n\n---\n*Shipped via /ship with L1/L2/L3 verification*' "$(git log -1 --format=%b)")
-
+# The body was written to $BODY_FILE above (template-shaped when the repo has
+# one). --rawfile keeps it verbatim; a quote or backslash in it cannot break the JSON.
 RESP=$(curl -s -w '\n%{http_code}' -X POST \
   -H "Authorization: Bearer $GH_TOKEN_VAL" \
   -H "Accept: application/vnd.github+json" \
   -H "X-GitHub-Api-Version: 2022-11-28" \
   -d "$(jq -n --arg t "$(git log -1 --format=%s)" --arg h "$BRANCH" \
-            --arg b "$TARGET_BRANCH" --arg body "$BODY" \
+            --arg b "$TARGET_BRANCH" --rawfile body "$BODY_FILE" \
         '{title:$t, head:$h, base:$b, body:$body}')" \
   "$API_BASE/repos/$PROJECT_PATH/pulls")
 
@@ -261,7 +307,7 @@ blast radius.
 if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
   gh pr create --base "$TARGET_BRANCH" --head "$BRANCH" \
     --title "$(git log -1 --format=%s)" \
-    --body "$(printf '## Summary\n\n%s\n\n---\n*Shipped via /ship with L1/L2/L3 verification*' "$(git log -1 --format=%b)")"
+    --body-file "$BODY_FILE"
 fi
 ```
 
@@ -298,20 +344,17 @@ curl -s --request POST \
   --data "$(jq -n \
       --arg s "$BRANCH" --arg t "$TARGET_BRANCH" \
       --arg title "$(git log -1 --format=%s)" \
-      --arg body "## Summary
-
-$(git log -1 --format=%b)
-
----
-*Shipped via /ship with L1/L2/L3 verification*" \
+      --rawfile body "$BODY_FILE" \
       '{source_branch:$s, target_branch:$t, title:$title, description:$body}')" \
   "https://$FORGE_HOST/api/v4/projects/$ENCODED_PATH/merge_requests" \
   | jq '{id, iid, web_url, state}'
 ```
 
-> Build the JSON with `jq -n`, never string interpolation — a commit body
-> containing a quote, backslash, or newline otherwise produces invalid JSON and the
-> API returns a 400 that reads like an auth failure.
+> Build the JSON with `jq -n` (`--rawfile` for the body), never string
+> interpolation — a body containing a quote, backslash, or newline otherwise
+> produces invalid JSON and the API returns a 400 that reads like an auth failure.
+> The body comes from `$BODY_FILE`, shaped by the repo's MR template when it has
+> one — see *Build the description* above.
 
 > **No `draft:` title prefix.** GitLab parses it and returns `draft: true`, which
 > blocks the merge button until someone manually clicks "Mark as ready" — a hidden

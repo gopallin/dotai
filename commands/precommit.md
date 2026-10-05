@@ -98,6 +98,16 @@ The `tree=` fingerprint expires the PASS as soon as anything else is edited.
 Consequences: do not hand-write `PRECOMMIT_STATUS=PASS`, it grants nothing; and
 run `/precommit` **after** the last edit, not before.
 
+## One repository per run
+
+The pipeline grades the repository that contains **cwd**, and writes that
+repo's receipt. A session that also wrote into a sibling repository (frontend +
+backend in one feature) must run `/precommit` **from inside that repo too** —
+`stop-guard` groups the session's writes by the repository that owns each
+file and refuses the stop until every one of them holds a PASS on its current
+tree, naming the repo and the `cd <root> && bash …/precommit.sh` to run. One
+PASS never covers two trees.
+
 ## Execution
 
 !bash -c 'exec bash "$HOME/.claude/commands/precommit.sh"'

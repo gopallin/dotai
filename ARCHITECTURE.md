@@ -104,7 +104,13 @@ round trips, the numeric sub-agent threshold. See `docs/ABLATION.md`.
    `/private/tmp`, so a textual prefix test would miss real in-repo paths and fail
    *open* — the dangerous direction. Observed 2026-08-19: a write to the session
    scratchpad was blocked merely because cwd happened to sit on main.
-6. **Fail-open** when the tool input carries neither a command nor a file path:
+6. **A file edit is judged by the repository that owns the file**, resolved
+   physically from its path — not by cwd. A session in repo A on a feature
+   branch editing sibling repo B on master is blocked, and the mirror case
+   (cwd on master, file in B on a feature branch) passes. Bash commands are
+   still judged by cwd, where they run. (2026-10-05; the same cwd-only blind
+   spot grounding-guard and stop-guard had.)
+7. **Fail-open** when the tool input carries neither a command nor a file path:
    the payload was unparsable, and failing closed would block *every* tool call
    including the `git checkout` needed to escape master. Note the deliberate
    asymmetry inside the command checks — the redirect test runs on the
@@ -213,9 +219,13 @@ Triggered **before** any tool (Bash, Read, API) executes.
 - `branch-guard.sh` — Blocks **write** commands and non-doc file edits on master/main; read-only commands pass through
 - `grounding-guard.sh` — Two gates in one hook: (1) blocks the first un-grounded
   code edit until `/ground` passes; (2) blocks **every** later edit outside the
-  `scope_files:` list declared with that PASS — gate 2 is `[unverified]`
-  in the CLAUDE.md sense: tested against real payloads on all three CLIs, not yet
-  observed firing in a live session
+  `scope_files:` list declared with that PASS — gate 2 was **observed firing
+  live on 2026-10-05**. The repo is resolved from the **file's** path: a file in
+  another repository is gated like any other (declared as `../other/…` or
+  absolute), and the first edit into that repo is refused once with its
+  `CLAUDE.md` / `.claude/reviewer-rules.md` attached. Markers are read from the
+  conversation's own text blocks only (Claude), never from tool results — the
+  hook's own refusal text used to satisfy gate 1 (CLAUDE.md §Cross-repo gates).
 - `deployed-guard.sh` — Blocks edits to the *installed* copies under `~/.claude`, `~/.codex`, `~/.gemini`, and names the `~/dotai` source file to edit instead
 - `glab-guard.sh` — Blocks the `glab` CLI (not installed), redirects to curl + `$GITLAB_TOKEN`
 - `secret-guard.sh` — Blocks `security dump-keychain`, the one credential dump redaction cannot cover
@@ -316,13 +326,17 @@ each turn cost far more than redundant reads do.
 
 #### CLI-Specific Stop Hooks
 
-- **claude/stop-guard.sh** — the end-of-work gate, in two layers:
+- **claude/stop-guard.sh** — the end-of-work gate, in two layers, run once per
+  **repository the session wrote into** (grouped by the repo that owns each
+  file, cwd repo first — a sibling repo's files used to be dropped as "outside
+  this repo" and shipped with no gate at all, 2026-10-05):
   **(1)** did this session write any code file that is still pending in this repo?
   If not, allow the stop. **(2)** if it did, read the receipt at
   `$GIT_DIR/dotai-precommit` and require `status=PASS` **and** `tree=` equal to a
   freshly recomputed fingerprint of the current tree — so a PASS earned before
   later edits does not count. It is not enough that `/precommit` ran; it must have
-  passed, on this tree.
+  passed, on this tree. A block for a non-cwd repo names it and the
+  `cd <root> && bash …/precommit.sh` to run.
   When it blocks for a stale PASS it also **names what moved** — the changed,
   added and removed paths, how long ago the PASS was earned, and a warning when
   another session earned it. Before that, the message was "the working tree
@@ -389,7 +403,7 @@ stdout, ignoring the exit code (see CLAUDE.md §agy Hook Contract).
 | Skill | Role |
 |---|---|
 | `ground` | The **checker** half of the front-of-work gate: restate the task, read 1–2 reference files, verify data/IDs, run the reviewer-rules protocol, then emit `GROUNDING_STATUS=PASS`. `grounding-guard.sh` blocks the first non-doc edit until it does. |
-| `ship` | Test → L1/L2/L3 review → commit → push → open MR/PR, routing to GitLab or GitHub by inspecting `origin` and calling its REST API with a Keychain token (no forge CLI). |
+| `ship` | Test → L1/L2/L3 review → commit → push → open MR/PR, routing to GitLab or GitHub by inspecting `origin` and calling its REST API with a Keychain token (no forge CLI). The body is built from the repo's own MR/PR template when it has one (the forge applies templates only in its web UI, so an API-opened MR with a `## Summary` body fails a template-checking CI gate — MR !891). One `/ship` ships one repo. |
 | `reviewer-rules` | The **single** source for the L1/L2/L3 review protocol, invoked by `/ground` Step 4.5 and `/ship` Step 2.5. It was previously inlined in both and had already drifted; project-specific rules are discovered from the project (`.claude/reviewer-rules.md` or a `## Reviewer Rules` section) rather than shipped globally. `tests/reviewer-rules.test.sh` fails if project-specific content reappears under `skills/` or `rules/`. |
 | `git-push` | Auto-detect GitLab/GitHub, apply the Keychain token. |
 | `gcloud` | This machine has no native `gcloud`/`kubectl`: every call runs in the `google/cloud-sdk` docker image with `~/.config/gcloud-cli` (login, expires daily) and `~/.config/gcloud-cli/kube` (kubeconfig) mounted. Carries the Logging / Pub/Sub / Monitoring-REST query templates and the dead-letter and `seek` cautions; project IDs stay in each project's own skill. |

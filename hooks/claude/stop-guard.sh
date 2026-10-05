@@ -40,11 +40,62 @@ if [[ -z "$EDITED_FILES" ]]; then
   exit 0
 fi
 
-REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-if [[ -z "$REPO_ROOT" ]]; then
-  exit 0  # Not inside a git repo — nothing to precommit
+
+
+# ── Layer 1a: which repositories did those writes land in? ───────────────────
+#
+# By the FILE's owner, not by cwd (2026-10-05). This guard used to grade only
+# the cwd repo and drop every other path as "written outside this repo" — true
+# for a scratch file, false for a file in a SIBLING repo, which was then
+# committed with no /precommit at all (nxl-shipping-server MR !891, built from
+# an nxl-shipping-client session). Writes are now grouped by the repository
+# that contains them, and EVERY such repository must hold its own PASS receipt
+# on its own current tree. The cwd repo is graded first; a path the transcript
+# could not resolve («unknown», some CLIs' fixtures) is attributed to it only.
+
+owning_root() {   # $1 = absolute path → physical root of the repo holding it, or nothing
+  local dir rest r
+  dir=$(dirname "$1"); rest=$(basename "$1")
+  while [[ ! -d "$dir" && "$dir" != "/" && "$dir" != "." ]]; do
+    rest="$(basename "$dir")/$rest"; dir=$(dirname "$dir")
+  done
+  dir=$(cd "$dir" 2>/dev/null && pwd -P) || return 0
+  r=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || return 0
+  [[ -n "$r" ]] && (cd "$r" 2>/dev/null && pwd -P)
+}
+
+CWD_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+[[ -n "$CWD_ROOT" ]] && CWD_ROOT=$(cd "$CWD_ROOT" 2>/dev/null && pwd -P)
+
+ROOTS=""
+ABS_EDITED=""
+while IFS= read -r f; do
+  [[ -z "$f" ]] && continue
+  if [[ "$f" == "«unknown»" ]]; then ABS_EDITED+="${f}"$'\n'; continue; fi
+  [[ "$f" != /* ]] && f="${CWD_ROOT:-$PWD}/${f}"
+  ABS_EDITED+="${f}"$'\n'
+  r=$(owning_root "$f")
+  [[ -n "$r" ]] || continue
+  grep -Fqx -- "$r" <<< "$ROOTS" || ROOTS+="${r}"$'\n'
+done <<< "$EDITED_FILES"
+EDITED_FILES="$ABS_EDITED"
+if [[ -n "$CWD_ROOT" ]]; then
+  ROOTS="${CWD_ROOT}"$'\n'"$(grep -Fxv -- "$CWD_ROOT" <<< "$ROOTS")"
 fi
 
+# ── gate_repo: the whole Layer 1b → Layer 2 check, for ONE repository ─────────
+#
+# Runs in a subshell after `cd "$ROOT"`, so every git call below sees that
+# repo; `exit` inside it ends only the subshell. REPO_NOTE names the repo in
+# every block message when it is not the session's cwd repo, because the fix
+# then has to be run from over there.
+gate_repo() {   # $1 = physical repo root
+REPO_ROOT="$1"
+REPO_NOTE=""
+if [[ "$REPO_ROOT" != "$CWD_ROOT" ]]; then
+  REPO_NOTE="↳ in repository ${REPO_ROOT} (not this session's cwd repo). Run /precommit THERE:  cd ${REPO_ROOT} && bash ~/.claude/commands/precommit.sh"
+  EDITED_FILES=$(grep -Fxv -- '«unknown»' <<< "$EDITED_FILES")
+fi
 # ── Layer 1b: Intersect the writes with what is actually dirty in THIS repo ────
 #
 # The previous version asked only "is the working tree dirty?" and treated any
@@ -68,7 +119,7 @@ while IFS= read -r f; do
   [[ "$f" != /* ]] && f="${REPO_ROOT}/${f}"
   case "$f" in
     "$REPO_ROOT"/*) rel="${f#"$REPO_ROOT"/}" ;;
-    *) continue ;;  # written outside this repo (scratchpad, $HOME, another repo)
+    *) continue ;;  # not this root — scratch, or graded under its own root
   esac
   while IFS= read -r d; do
     [[ -n "$d" && "$d" == "$rel" ]] && { RELEVANT+="${rel}"$'\n'; break; }
@@ -270,6 +321,7 @@ precommit_refusal_breaker() {   # $1 = receipt path, $2 = current tree fingerpri
 
 if [[ ! -f "$RECEIPT" ]]; then
   echo "⛔ Code changes are pending but /precommit has not run in this repo." >&2
+  [[ -n "$REPO_NOTE" ]] && echo "$REPO_NOTE" >&2
   echo "Pending files this session wrote:" >&2
   printf '  %s\n' $RELEVANT >&2
   echo "Run /precommit; it must reach PRECOMMIT_STATUS=PASS." >&2
@@ -306,6 +358,7 @@ if [[ "$RECEIPT_STATUS" != "PASS" ]]; then
     exit 0
   fi
   echo "⛔ /precommit ran but did not pass (receipt: status=${RECEIPT_STATUS:-unknown})." >&2
+  [[ -n "$REPO_NOTE" ]] && echo "$REPO_NOTE" >&2
   echo "Fix the failures and run /precommit again until it reports PRECOMMIT_STATUS=PASS." >&2
   if [[ "$REFUSAL_COUNT" -gt 0 ]]; then
     echo "" >&2
@@ -318,6 +371,7 @@ fi
 
 if [[ "$RECEIPT_TREE" != "$CURRENT_TREE" ]]; then
   echo "⛔ /precommit passed, but the working tree changed afterwards." >&2
+  [[ -n "$REPO_NOTE" ]] && echo "$REPO_NOTE" >&2
   echo "That PASS was earned on a different tree and does not cover the current one." >&2
 
   # The gate's decision is already made above; everything below is the report.
@@ -347,4 +401,20 @@ fi
 # complexity-guard.sh.
 
 rm -f "${RECEIPT}-refusals"   # a PASS on this tree ends any refusal streak
+exit 0
+
+}
+
+# ── Every repository the session wrote into must pass, cwd repo first ────────
+[[ -n "$ROOTS" ]] || exit 0
+LAST_OUT=""
+while IFS= read -r ROOT; do
+  [[ -z "$ROOT" ]] && continue
+  OUT=$( cd "$ROOT" 2>/dev/null && gate_repo "$ROOT" )
+  RC=$?
+  [[ "$RC" -eq 2 ]] && exit 2
+  [[ -n "$OUT" ]] && LAST_OUT="$OUT"
+done <<< "$ROOTS"
+# Only a give-up systemMessage ever reaches stdout; forward the last one.
+[[ -n "$LAST_OUT" ]] && printf '%s\n' "$LAST_OUT"
 exit 0

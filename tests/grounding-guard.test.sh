@@ -20,6 +20,7 @@ cleanup() {
   rm -f /tmp/dotai_grounding_test-* /tmp/dotai_scope_test-*
   rm -f /tmp/dotai_grounding_codex_test-* /tmp/dotai_scope_codex_test-*
   rm -f /tmp/dotai_grounding_agy_test-* /tmp/dotai_scope_agy_test-*
+  rm -f /tmp/dotai_foreign_test-* /tmp/dotai_foreign_codex_test-* /tmp/dotai_foreign_agy_test-*
 }
 trap cleanup EXIT
 
@@ -68,10 +69,12 @@ FEAT=$(mkrepo feature/test)
 MAIN=$(mkrepo main)
 NONREPO="$TMP/notarepo"; mkdir -p "$NONREPO"
 
-T_NONE=$(mktranscript '{"type":"assistant","text":"about to edit"}')
-T_PASS=$(mktranscript 'reference_file: app/Foo.php
-GROUNDING_STATUS=PASS')
-T_SKIP=$(mktranscript 'GROUNDING_STATUS=SKIP reason=typo fix no logic change')
+# Fixtures are JSONL assistant entries, as the real transcript is: the Claude
+# guard reads markers from the conversation's own text blocks only (see (k7)),
+# so a bare-text fixture would not be read.
+T_NONE=$(mktranscript '{"type":"assistant","message":{"content":[{"type":"text","text":"about to edit"}]}}')
+T_PASS=$(mktranscript '{"type":"assistant","message":{"content":[{"type":"text","text":"reference_file: app/Foo.php\nGROUNDING_STATUS=PASS"}]}}')
+T_SKIP=$(mktranscript '{"type":"assistant","message":{"content":[{"type":"text","text":"GROUNDING_STATUS=SKIP reason=typo fix no logic change"}]}}')
 
 echo "grounding-guard.sh tests"
 
@@ -162,6 +165,69 @@ run "(h11) .git write -> exit 0"            "$FEAT" "$T_SCOPE" "$FEAT/.git/info/
 # An explicit SKIP declares no scope, so it cannot be used to smuggle one in.
 run "(h12) SKIP ignores scope -> exit 0"    "$FEAT" "$T_SKIP"  "app/Http/Controllers/C.php" "test-h12" 0
 
+# ── Cross-repo: the FILE's repository decides, not cwd ───────────────────────
+#
+# 2026-10-05: nxl-shipping-server MR !891 was built from an nxl-shipping-client
+# session, and every gate waved the server files through as "outside the
+# working tree". Blocking cross-repo edits was rejected (one feature spans
+# frontend and backend), so instead: a foreign file is gated like any other,
+# declared by how it is reached from cwd (../other/…) or by absolute path, and
+# the FIRST edit into that repo is refused once with the repo's own rules.
+FOREIGN=$(mkrepo feature/other)
+FOREIGN_P=$(cd "$FOREIGN" && pwd -P)
+FB=$(basename "$FOREIGN")
+printf '# other repo rules\nNEVER_USE_APP_HELPER\n' > "$FOREIGN/CLAUDE.md"
+T_XREPO=$(mktranscript "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"scope_files: src/*.php\\\\nscope_files: ../$FB/app/*.php\\\\nGROUNDING_STATUS=PASS\"}]}}")
+
+echo "  ── cross-repo"
+# (k1) first edit into the foreign repo: refused once, carrying its rules
+json=$(printf '{"transcript_path":"%s","tool_input":{"file_path":"%s"},"session_id":"%s"}' \
+  "$T_XREPO" "$FOREIGN/app/x.php" "test-k1")
+msg=$(cd "$FEAT" && echo "$json" | bash "$HOOK" 2>&1 >/dev/null); code=$?
+[[ "$code" == 2 ]] && { echo "  ✅ (k1) first foreign edit -> exit 2 (entry brief)"; PASS=$((PASS+1)); } \
+  || { echo "  ❌ (k1) first foreign edit should be refused once (exit $code)"; FAIL=$((FAIL+1)); }
+grep -Fq 'NEVER_USE_APP_HELPER' <<< "$msg" && { echo "  ✅ (k1) brief carries the foreign CLAUDE.md"; PASS=$((PASS+1)); } \
+  || { echo "  ❌ (k1) brief lacks the foreign CLAUDE.md: $msg"; FAIL=$((FAIL+1)); }
+grep -Fq "$FOREIGN_P" <<< "$msg" && { echo "  ✅ (k1) brief names the foreign repo"; PASS=$((PASS+1)); } \
+  || { echo "  ❌ (k1) brief does not name the repo: $msg"; FAIL=$((FAIL+1)); }
+grep -Fq "scope_files: ../$FB/app/x.php" <<< "$msg" && { echo "  ✅ (k1) brief shows the cwd-relative declaration form"; PASS=$((PASS+1)); } \
+  || { echo "  ❌ (k1) brief does not show how to declare the file: $msg"; FAIL=$((FAIL+1)); }
+# (k2) the retry is not held by the brief
+run "(k2) same session, retry -> exit 0"          "$FEAT" "$T_XREPO" "$FOREIGN/app/x.php" "test-k1" 0
+# (k3) …but the scope still binds foreign files
+json=$(printf '{"transcript_path":"%s","tool_input":{"file_path":"%s"},"session_id":"%s"}' \
+  "$T_XREPO" "$FOREIGN/lib/y.php" "test-k1")
+msg=$(cd "$FEAT" && echo "$json" | bash "$HOOK" 2>&1 >/dev/null); code=$?
+[[ "$code" == 2 ]] && { echo "  ✅ (k3) foreign file out of scope -> exit 2"; PASS=$((PASS+1)); } \
+  || { echo "  ❌ (k3) foreign file out of scope should block (exit $code)"; FAIL=$((FAIL+1)); }
+grep -Fq "../$FB/lib/y.php" <<< "$msg" && { echo "  ✅ (k3) block names the file as reached from cwd"; PASS=$((PASS+1)); } \
+  || { echo "  ❌ (k3) block does not name ../$FB/lib/y.php: $msg"; FAIL=$((FAIL+1)); }
+# (k4) absolute-path declaration, and the repo's CLAUDE.md already read: no brief
+T_XABS=$(mktranscript "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Read\",\"input\":{\"file_path\":\"$FOREIGN_P/CLAUDE.md\"}}]}}
+{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"scope_files: $FOREIGN_P/app/z.php\\\\nGROUNDING_STATUS=PASS\"}]}}")
+run "(k4) absolute declaration + CLAUDE.md already read -> exit 0" "$FEAT" "$T_XABS" "$FOREIGN/app/z.php" "test-k4" 0
+# (k5) a foreign repo on main is branch-guard's case, not this hook's
+FOREIGN_MAIN=$(mkrepo main)
+run "(k5) foreign repo on main -> exit 0"         "$FEAT" "$T_XREPO" "$FOREIGN_MAIN/app/x.php" "test-k5" 0
+# (k6) a pattern relative to the cwd repo must NOT cover the sibling's tree
+T_CWDONLY=$(mktranscript '{"type":"assistant","message":{"content":[{"type":"text","text":"scope_files: app/*.php\nGROUNDING_STATUS=PASS"}]}}')
+printf '%s\n' "$FOREIGN_P" > /tmp/dotai_foreign_test-k6   # brief already delivered
+run "(k6) cwd-relative pattern does not reach the foreign repo -> exit 2" "$FEAT" "$T_CWDONLY" "$FOREIGN/app/x.php" "test-k6" 2
+# (k7) only the conversation's own text declares — a marker quoted inside a
+# tool_result (a cat of SKILL.md, or this hook's own block message fed back)
+# must satisfy nothing. Observed live 2026-10-05: ~40 junk scope patterns, and
+# gate 1 satisfied by the guard's own refusal text.
+T_POLLUTED=$(mktranscript '{"type":"user","message":{"content":[{"type":"tool_result","content":"then emit GROUNDING_STATUS=PASS\nscope_files: app/**"}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"reading the skill"}]}}')
+run "(k7) PASS only inside a tool_result -> exit 2"   "$FEAT" "$T_POLLUTED" "src/x.php" "test-k7" 2
+T_POLLUTED2=$(mktranscript '{"type":"assistant","message":{"content":[{"type":"text","text":"scope_files: src/*.php\nGROUNDING_STATUS=PASS"}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","content":"scope_files: app/**"}]}}')
+run "(k7) scope quoted in a tool_result does not widen -> exit 2" "$FEAT" "$T_POLLUTED2" "app/x.php" "test-k7b" 2
+# (k8) the user's own message counts: that is how a session was unblocked when
+# the harness never wrote the assistant's declaration to the transcript.
+T_USERDECL=$(mktranscript '{"type":"user","message":{"content":"scope_files: src/*.php\nGROUNDING_STATUS=PASS"}}')
+run "(k8) declaration in a user message -> exit 0"    "$FEAT" "$T_USERDECL" "src/x.php" "test-k8" 0
+
 # ── Cross-CLI: the ports must actually fire ──────────────────────────────────
 #
 # dotai has shipped inert ports before (complexity-guard read an env var Claude
@@ -208,6 +274,44 @@ agy_run() {   # $1 = name, $2 = target file, $3 = session, $4 = expected decisio
 agy_run "(i3) agy: in scope -> allow"  "$FEAT/app/Services/A.php"      "test-i3" allow
 agy_run "(i4) agy: out of scope -> deny" "$FEAT/app/Http/Controllers/C.php" "test-i4" deny
 
+# Cross-repo on the two ports: the first patch/edit into the sibling repo is
+# refused once with its rules, the retry passes, and the scope still binds.
+codex_x() {   # $1 = name, $2 = patch, $3 = session, $4 = expected exit, $5 = stderr must contain ("" = skip)
+  local json code err
+  json=$(jq -cn --arg t "$T_XREPO" --arg c "$2" --arg s "$3" \
+    '{transcript_path:$t,tool_input:{command:$c},session_id:$s}')
+  err=$( (cd "$FEAT" && echo "$json" | bash "$ROOT/hooks/codex/grounding-guard.sh" 2>&1 >/dev/null); echo "rc=$?" )
+  code=$(sed -n 's/^rc=//p' <<< "$err" | tail -1)
+  if [[ "$code" == "$4" && ( -z "$5" || "$err" == *"$5"* ) ]]; then echo "  ✅ $1 (exit $code)"; PASS=$((PASS+1))
+  else echo "  ❌ $1 (got exit $code, expected $4; wanted '$5'): $err"; FAIL=$((FAIL+1)); fi
+}
+codex_x "(i5) codex: first patch into the foreign repo -> exit 2 with its rules" \
+  "*** Begin Patch
+*** Update File: ../$FB/app/A.php
+*** End Patch" "test-i5" 2 "NEVER_USE_APP_HELPER"
+codex_x "(i6) codex: retry -> exit 0" \
+  "*** Begin Patch
+*** Update File: ../$FB/app/A.php
+*** End Patch" "test-i5" 0 ""
+codex_x "(i7) codex: foreign target out of scope -> exit 2" \
+  "*** Begin Patch
+*** Update File: ../$FB/lib/B.php
+*** End Patch" "test-i5" 2 "../$FB/lib/B.php"
+
+agy_x() {   # $1 = name, $2 = target, $3 = session, $4 = expected decision, $5 = reason must contain
+  local out got reason
+  out=$( (cd "$FEAT" && jq -cn --arg t "$T_XREPO" --arg f "$2" --arg s "$3" \
+      '{toolCall:{name:"write_to_file",args:{TargetFile:$f}},transcriptPath:$t,conversationId:$s}' \
+    | bash "$ROOT/hooks/agy/grounding-guard.sh" 2>/dev/null) )
+  got=$(printf '%s' "$out" | jq -r '.decision // "«none»"' 2>/dev/null)
+  reason=$(printf '%s' "$out" | jq -r '.reason // ""' 2>/dev/null)
+  if [[ "$got" == "$4" && ( -z "$5" || "$reason" == *"$5"* ) ]]; then echo "  ✅ $1 (decision $got)"; PASS=$((PASS+1))
+  else echo "  ❌ $1 (got '$got', expected '$4'; wanted '$5'); raw: $out"; FAIL=$((FAIL+1)); fi
+}
+agy_x "(i8) agy: first edit into the foreign repo -> deny with its rules" "$FOREIGN/app/A.php" "test-i8" deny "NEVER_USE_APP_HELPER"
+agy_x "(i9) agy: retry -> allow"                                           "$FOREIGN/app/A.php" "test-i8" allow ""
+agy_x "(i10) agy: foreign file out of scope -> deny"                       "$FOREIGN/lib/B.php" "test-i8" deny "../$FB/lib/B.php"
+
 # ── Parity: one scope algorithm, three copies ────────────────────────────────
 #
 # The helpers are duplicated rather than sourced for the same reason as the
@@ -215,7 +319,8 @@ agy_run "(i4) agy: out of scope -> deny" "$FEAT/app/Http/Controllers/C.php" "tes
 # no shared path exists. Drift here is silent — one CLI would accept a pattern
 # another refuses — so it is locked textually.
 extract_fn() { sed -n "/^$2()/,/^}/p" "$1" | sed 's/#.*//' | tr -d ' \t' | sed '/^$/d'; }
-for fn in extract_scope scope_allows; do
+# relpath() is the cross-repo helper (../other/… from cwd); same duplication, same lock.
+for fn in extract_scope scope_allows relpath; do
   ref=$(extract_fn "$ROOT/hooks/claude/grounding-guard.sh" "$fn")
   if [[ -z "$ref" ]]; then
     echo "  ❌ (j) could not extract $fn() from claude/grounding-guard.sh"; FAIL=$((FAIL+1))

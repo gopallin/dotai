@@ -139,6 +139,16 @@ check_edit block '%R%/does/not/exist/yet/Foo.php'
 # Relative path, resolved against cwd (= the repo root in this harness).
 check_edit block 'app/Services/Foo.php'
 
+# ── Cross-repo: the FILE's repository decides, not cwd (2026-10-05) ──────────
+# A session in a feature-branch repo editing a sibling repo that sits on master
+# used to pass, because only cwd's branch was ever consulted. And the mirror
+# image — cwd on master, file in a sibling on a feature branch — used to block
+# a perfectly legal edit.
+check_edit block "$TMP/protected/src/x.php" feature
+check_edit allow "$TMP/feature/src/x.php"   protected
+# Outside every repository: nothing to protect, whatever cwd's branch is.
+check_edit allow "$TMP/x.php" protected
+
 # git internals: git cannot track anything inside .git, so a write there can never
 # dirty the branch or enter history. Blocking it only broke /handoff, which writes
 # its ignore patterns to .git/info/exclude.

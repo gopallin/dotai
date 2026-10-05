@@ -151,10 +151,22 @@ proposed scope had quietly grown to include frontend files. Deciding the radius
 | `app/Services/LabelService.php` | exactly that file |
 | `app/Services/*.php` | any `.php` under `app/Services` — note `*` also crosses `/`, so nested dirs match too |
 | `resources/js/` or `resources/js/**` | the whole subtree |
+| `../nxl-shipping-server/app/Jobs/X.php` or `/abs/path/to/it` | a file in **another repository**, as reached from this cwd or absolute — see below |
 
 Include the **tests** you will add, and any migration/seed files. Exempt without
 declaring: `*.md`, `*/.claudedocs/*`, anything under `.git/`, and paths outside
-the repo — none of them can enter this branch's diff.
+every repository (scratch files) — none of them can enter any branch's diff.
+
+**Files in another repository are not exempt.** A feature that spans frontend
+and backend is normal here, so the guard does not block cross-repo edits — it
+gates them the same way, keyed to the repo that **owns the file**, not to cwd.
+Declare such a file as reached from this cwd (`../other-repo/app/X.php`) or by
+absolute path; a pattern relative to that repo's own root (`app/*.php`) does
+**not** cover it, because the same pattern declared for this repo must not
+silently reach a sibling. The first edit into another repo this session is
+refused once with that repo's `CLAUDE.md` and `.claude/reviewer-rules.md`
+attached — read them; nothing else in this session loads them. That repo also
+needs its own `/precommit` (run from inside it) and its own `/ship`.
 
 **Widening it later is allowed, and must be loud.** If the work genuinely needs a
 file you did not declare, say why in one line and emit a new `scope_files:` line
@@ -209,6 +221,23 @@ GROUNDING_STATUS=SKIP reason=single-line typo fix in error message, no logic/dat
   **Gate 2** (scope) checks every edit, because that is where creep happens.
 - Bash writes (`echo >`, `sed -i`) bypass both gates: the hook is not registered
   for Bash on any CLI.
+- **Only the conversation's own text declares** (Claude Code): the assistant's
+  text blocks and the user's messages. A marker quoted inside a tool result —
+  a `cat` of this file, or the hook's own block message fed back — counts for
+  nothing. Observed 2026-10-05: the hook's refusal text used to satisfy gate 1
+  on the next attempt, and ~40 junk `scope_files:` patterns were lifted from
+  tool output. Codex and agy still scan the raw transcript (their JSONL shapes
+  are not pinned down).
+- **Transcript lag** [probed 2026-10-05]: Claude Code writes a response's
+  blocks to the JSONL only after its tool call has run. A declaration and an
+  edit in the **same** response therefore meet the hook before the declaration
+  exists on disk — the edit is refused once, and the retry passes. In the same
+  probe, two declaration text blocks were never written at all and the session
+  was unblocked by the **user** pasting the declaration. Emit the marker, let
+  the turn end (or at least one tool call complete), then edit.
+- A file in another repository: gated by **that** repo's branch and declared
+  as `../other/…` or absolute (Step 5.5). The first edit into it is refused
+  once with its rules attached.
 
 ## Honesty Note
 
