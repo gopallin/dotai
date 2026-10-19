@@ -153,5 +153,33 @@ else
   PASS=$((PASS+1))
 fi
 
+# The MR/PR body must come from the repo's own template when it has one. The
+# forge applies .gitlab/merge_request_templates/Default.md and
+# .github/pull_request_template.md only in its web UI, so an API-opened MR with
+# a hand-rolled "## Summary" body fails any CI gate that checks the template's
+# sections (nxl-shipping-server MR !891, 2026-10-05).
+for needle in '.gitlab/merge_request_templates/Default.md' '.github/pull_request_template.md' 'BODY_FILE'; do
+  grep -Fq "$needle" "$SKILL" && PASS=$((PASS+1)) || {
+    FAIL=$((FAIL+1)); echo "❌ skill does not build the body from the repo template ($needle missing)" >&2
+  }
+done
+# Both forge paths must send that file, not an inline "## Summary" string.
+if printf '%s' "$GL_SECTION" | grep -q -- '--rawfile body "$BODY_FILE"'; then PASS=$((PASS+1)); else
+  FAIL=$((FAIL+1)); echo "❌ GitLab path does not send \$BODY_FILE via --rawfile" >&2
+fi
+if printf '%s' "$GH_SECTION" | grep -q -- '--rawfile body "$BODY_FILE"' \
+   && printf '%s' "$GH_SECTION" | grep -q -- '--body-file "$BODY_FILE"'; then PASS=$((PASS+1)); else
+  FAIL=$((FAIL+1)); echo "❌ GitHub path (REST and gh) does not send \$BODY_FILE" >&2
+fi
+if grep -qE -- "--arg body \"## Summary|printf '## Summary" "$SKILL"; then
+  FAIL=$((FAIL+1)); echo "❌ skill still hard-codes a '## Summary' body on a forge path" >&2
+else
+  PASS=$((PASS+1))
+fi
+# One /ship ships one repo; a cross-repo feature needs a second /ship there.
+grep -Fq 'One `/ship` ships one repository' "$SKILL" && PASS=$((PASS+1)) || {
+  FAIL=$((FAIL+1)); echo "❌ skill does not say that a sibling repo needs its own /ship" >&2
+}
+
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]

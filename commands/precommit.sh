@@ -674,6 +674,16 @@ laravel_test() {
 # actually declares. This never silently narrows the gate — if the repo declares
 # neither a build- nor a test-shaped script that is a FAIL, and whatever did run
 # is printed by name, so a PASS can never be read as "everything was checked".
+#
+# Monorepos (2026-10-01, nxl-shipping-client): root package.json declared
+# `workspaces`, and its root `lint`/`build`/`test` all delegated to ONE of them
+# (`npm run lint --workspace apps/legacy`). A change confined to apps/next and
+# packages/core was therefore graded by apps/legacy's linter — 375 pre-existing
+# errors in 62 files the change never touched — and the FAIL was unclearable
+# without sweeping those files into the branch. So when `workspaces` is
+# declared, the scripts come from the workspaces that OWN the pending files,
+# run from inside each one; root's scripts run only for files outside every
+# workspace. Which workspaces ran, and which had nothing to run, is printed.
 
 # Sets NODE_PM and NODE_PM_SRC. Two outputs, so it assigns rather than echoes:
 # building the "(from …)" half as a nested command substitution inside the echo
@@ -691,10 +701,15 @@ node_resolve_pm() {
   fi
 }
 
-# Does package.json declare this script? Uses node so a `scripts` key that is
-# absent, null, or malformed answers "no" instead of crashing the pipeline.
+# The package whose scripts are being resolved and run: "." for the root, or a
+# workspace dir (repo-relative) in a monorepo. Every node_* helper below reads
+# it, so the loop over owning workspaces only has to set this one variable.
+NODE_DIR="."
+
+# Does $NODE_DIR/package.json declare this script? Uses node so a `scripts` key
+# that is absent, null, or malformed answers "no" instead of crashing the pipeline.
 node_has_script() {
-  node -e 'try{const s=(require("./package.json").scripts)||{};process.exit(s[process.argv[1]]?0:1)}catch(e){process.exit(1)}' "$1" 2>/dev/null
+  node -e 'try{const s=(require(require("path").resolve(process.argv[2],"package.json")).scripts)||{};process.exit(s[process.argv[1]]?0:1)}catch(e){process.exit(1)}' "$1" "$NODE_DIR" 2>/dev/null
 }
 
 # First declared script from a preference-ordered candidate list; empty if none.
@@ -704,6 +719,48 @@ node_pick_script() {
     if node_has_script "$c"; then printf '%s' "$c"; return 0; fi
   done
   printf ''
+}
+
+# Run a declared script from inside $NODE_DIR. A subshell `cd` rather than
+# `--workspace`/`--filter` flags: npm, yarn, pnpm and bun all resolve a
+# workspace's scripts and its hoisted node_modules/.bin from its own directory,
+# whereas the flag spelling differs per runner.
+node_run_script() {
+  ( cd "$NODE_DIR" && "$NODE_PM" run "$1" )
+}
+
+# Workspace dirs declared by the root package.json — `workspaces` as an array
+# or as `{packages: [...]}` — expanded through the shell's glob, one per line,
+# repo-relative, only those that actually hold a package.json. Empty when the
+# field is absent, which is the single-package case.
+node_workspaces() {
+  local pat d
+  node -e 'try{let w=require("./package.json").workspaces;if(w&&!Array.isArray(w))w=w.packages;(w||[]).forEach(p=>console.log(String(p)))}catch(e){}' 2>/dev/null \
+    | while IFS= read -r pat; do
+        [[ -n "$pat" ]] || continue
+        pat="${pat#./}"; pat="${pat%/}"
+        for d in $pat; do   # unquoted on purpose: apps/* → apps/legacy apps/next
+          [[ -f "$d/package.json" ]] && printf '%s\n' "$d"
+        done
+      done | sort -u
+}
+
+# Which packages own the pending files: the longest workspace prefix, or "."
+# for a file outside every workspace. Docs are skipped for the same reason
+# stop-guard exempts them — a README edit needs no build. Empty when nothing
+# non-doc is pending; the caller then falls back to the root.
+node_pending_owners() {   # $1 = newline-separated workspace dirs
+  local ws="$1" f owner best w
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    case "$f" in *.md|.claudedocs/*|*/.claudedocs/*) continue ;; esac
+    owner="."; best=0
+    while IFS= read -r w; do
+      [[ -n "$w" ]] || continue
+      if [[ "$f" == "$w"/* && ${#w} -gt $best ]]; then owner="$w"; best=${#w}; fi
+    done <<< "$ws"
+    printf '%s\n' "$owner"
+  done < <(node_snapshot_pending) | sort -u
 }
 
 # ── The lint step must not write to the repo ──────────────────────────────────
@@ -820,18 +877,33 @@ node_report_lint_writes() {
 # a maintenance surface that fails silently when one of them changes. Grepping
 # the output for the pending files' own paths works for all of them.
 #
-# Both the repo-relative path and the bare basename are tried, because a linter
-# invoked inside a workspace prints paths relative to THAT package
-# (`src/x/Y.vue`), not to the repo root (`apps/legacy/src/x/Y.vue`). Matching only
-# the full path would miss those and fail OPEN — the one direction this must not
-# fail. A basename collision merely gates a run that would have gated anyway.
+# Three spellings are tried, because a linter invoked inside a workspace prints
+# paths relative to THAT package (`src/x/Y.vue`), not to the repo root
+# (`apps/legacy/src/x/Y.vue`), and matching only the full path would miss those
+# and fail OPEN — the one direction this must not fail:
+#   1. the repo-relative path (also a substring of an absolute one)
+#   2. the path relative to $NODE_DIR, when the run is inside a workspace
+#   3. `parent/basename`, for a root script that delegates into a workspace
+# NOT the bare basename. An earlier version tried it, on the theory that a
+# collision "merely gates a run that would have gated anyway". It did not: on
+# 2026-10-01 a pending apps/next/…/stores/picking.js matched apps/legacy's
+# pre-existing `src/store/picking.js` error, the FAIL was attributed to a change
+# that had never touched that file, and stop-guard refused nine stops in a row.
 node_failure_is_mine() {
-  local out="$1" f
+  local out="$1" f rel
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue
     case "$f" in *.js|*.jsx|*.mjs|*.cjs|*.ts|*.tsx|*.vue) ;; *) continue ;; esac
-    printf '%s' "$out" | grep -Fq "$f"            && return 0
-    printf '%s' "$out" | grep -Fq "$(basename "$f")" && return 0
+    printf '%s' "$out" | grep -Fq "$f" && return 0
+    if [[ "$NODE_DIR" != "." && "$f" == "$NODE_DIR"/* ]]; then
+      rel="${f#"$NODE_DIR"/}"
+      printf '%s' "$out" | grep -Fq "$rel" && return 0
+    fi
+    case "$f" in
+      */*/*)
+        rel="${f%/*}"; rel="${rel##*/}/${f##*/}"
+        printf '%s' "$out" | grep -Fq "$rel" && return 0 ;;
+    esac
   done < <(node_snapshot_pending)
   return 1
 }
@@ -849,7 +921,7 @@ node_failure_is_mine() {
 node_lint() {
   local before out rc
   before=$(node_snapshot_pending)
-  out=$("$NODE_PM" run "$NODE_LINT" 2>&1)
+  out=$(node_run_script "$NODE_LINT" 2>&1)
   rc=$?
   node_restore_lint_writes "$before"
   printf '%s\n' "$out"
@@ -937,22 +1009,75 @@ case "$STACK" in
       exit 1
     fi
 
-    # `lint:fix` last, not first. It was first, which made the gate prefer the
-    # one variant guaranteed to rewrite the repo — see node_lint above. When a
-    # project declares only `lint:fix`, it still runs, but node_lint undoes what
-    # it wrote to files this change did not touch.
-    NODE_LINT=$(node_pick_script lint typecheck type-check lint:fix)
-    NODE_BUILD=$(node_pick_script build)
-    NODE_TEST=$(node_pick_script test:unit test)
+    # Which package.json files supply the scripts. Single package: the root.
+    # Monorepo: the workspaces owning the pending files — see the header of
+    # this section for the incident that made root's scripts the wrong answer.
+    # Nothing non-doc pending (or only root-level files) → the root, as before.
+    NODE_WORKSPACES=$(node_workspaces)
+    NODE_OWNERS="."
+    if [[ -n "$NODE_WORKSPACES" ]]; then
+      NODE_OWNERS=$(node_pending_owners "$NODE_WORKSPACES")
+      [[ -n "$NODE_OWNERS" ]] || NODE_OWNERS="."
+    fi
 
     # Printed before the steps, not inside them: run_step swallows a passing
     # step's output, and "build passed" without naming the script that ran is
     # the same claim as "something ran somewhere".
     echo "Runner: ${NODE_PM} (from ${NODE_PM_SRC})"
-    echo "Scripts: lint=${NODE_LINT:-(none declared)} build=${NODE_BUILD:-(none declared)} test=${NODE_TEST:-(none declared)}"
+    if [[ -n "$NODE_WORKSPACES" ]]; then
+      echo "Workspaces: $(printf '%s\n' "$NODE_WORKSPACES" | tr '\n' ' ' | sed 's/ $//')"
+      echo "Pending files are owned by: $(printf '%s\n' "$NODE_OWNERS" | sed 's/^\.$/(root)/' | tr '\n' ' ' | sed 's/ $//')"
+      if ! grep -qx '\.' <<< "$NODE_OWNERS"; then
+        echo "Root scripts skipped: every pending file lives inside a workspace,"
+        echo "so each workspace's own scripts gate it instead of the root's."
+      fi
+    fi
+
+    # One pass per owning package. A here-string, not a pipe: run_step's
+    # `exit 1` and the STACK reassignment below must happen in this shell.
+    NODE_RAN_ANY=0
+    while IFS= read -r NODE_DIR; do
+      [[ -n "$NODE_DIR" ]] || continue
+      # `lint:fix` last, not first. It was first, which made the gate prefer the
+      # one variant guaranteed to rewrite the repo — see node_lint above. When a
+      # project declares only `lint:fix`, it still runs, but node_lint undoes
+      # what it wrote to files this change did not touch.
+      NODE_LINT=$(node_pick_script lint typecheck type-check lint:fix)
+      NODE_BUILD=$(node_pick_script build)
+      NODE_TEST=$(node_pick_script test:unit test)
+      if [[ "$NODE_DIR" == "." ]]; then
+        NODE_LABEL=""
+        echo "Scripts: lint=${NODE_LINT:-(none declared)} build=${NODE_BUILD:-(none declared)} test=${NODE_TEST:-(none declared)}"
+      else
+        NODE_LABEL="${NODE_DIR}: "
+        echo "Scripts (${NODE_DIR}): lint=${NODE_LINT:-(none declared)} build=${NODE_BUILD:-(none declared)} test=${NODE_TEST:-(none declared)}"
+      fi
+
+      if [[ -z "$NODE_BUILD" && -z "$NODE_TEST" ]]; then
+        # Said per package, on the PASS path too: a workspace that gated
+        # nothing must not hide behind a sibling's green ticks.
+        [[ "$NODE_DIR" != "." ]] \
+          && echo "   ↳ ${NODE_DIR}/package.json declares neither a build nor a test script — nothing to run for it."
+        continue
+      fi
+      NODE_RAN_ANY=1
+
+      # `if` blocks rather than `[[ … ]] && run_step …`: the && form leaves a
+      # non-zero status behind when the guard is false, which under `set -o
+      # pipefail` is a trap waiting for the next person who adds `set -e`.
+      if [[ -n "$NODE_LINT" ]]; then
+        NODE_WARN_FILE=$(mktemp -t dotai-precommit-node-warn)
+        run_step "lint (${NODE_LABEL}${NODE_LINT})" node_lint
+        node_report_lint_writes
+      fi
+      if [[ -n "$NODE_BUILD" ]]; then run_step "build (${NODE_LABEL}${NODE_BUILD})" node_run_script "$NODE_BUILD"; fi
+      if [[ -n "$NODE_TEST" ]];  then run_step "test (${NODE_LABEL}${NODE_TEST})"   node_run_script "$NODE_TEST";  fi
+    done <<< "$NODE_OWNERS"
+    NODE_DIR="."
     echo ""
 
-    # Neither build nor test declared → degrade to generic mode, do NOT FAIL.
+    # Neither build nor test declared anywhere that owns a pending file →
+    # degrade to generic mode, do NOT FAIL.
     #
     # A FAIL here would be permanent: nothing the agent can do to a repo whose
     # package.json simply has no test script clears it, so stop-guard would
@@ -961,9 +1086,14 @@ case "$STACK" in
     # the agent wrote its own precommit script into the repo to get past the
     # gate. Generic mode is the honest floor: it states out loud that nothing
     # was built and nothing was tested, so the PASS cannot be misread.
-    if [[ -z "$NODE_BUILD" && -z "$NODE_TEST" ]]; then
-      echo "⚠️  package.json declares neither a build nor a test script, so this"
-      echo "    mode has nothing to run. Generic checks only — see the note above"
+    if [[ "$NODE_RAN_ANY" -eq 0 ]]; then
+      if [[ -n "$NODE_WORKSPACES" ]]; then
+        echo "⚠️  No workspace owning a pending file declares a build or a test"
+        echo "    script, so this mode has nothing to run. Generic checks only —"
+      else
+        echo "⚠️  package.json declares neither a build nor a test script, so this"
+        echo "    mode has nothing to run. Generic checks only — see the note above"
+      fi
       echo "    PASS. If the project does have a pipeline under other script"
       echo "    names, give it a tracked .claude/commands/precommit.sh."
       echo ""
@@ -972,17 +1102,6 @@ case "$STACK" in
       # as a hardcoded install summary.
       STACK="generic"
       generic_steps
-    else
-      # `if` blocks rather than `[[ … ]] && run_step …`: the && form leaves a
-      # non-zero status behind when the guard is false, which under `set -o
-      # pipefail` is a trap waiting for the next person who adds `set -e`.
-      if [[ -n "$NODE_LINT" ]]; then
-        NODE_WARN_FILE=$(mktemp -t dotai-precommit-node-warn)
-        run_step "lint (${NODE_LINT})" node_lint
-        node_report_lint_writes
-      fi
-      if [[ -n "$NODE_BUILD" ]]; then run_step "build (${NODE_BUILD})" "$NODE_PM" run "$NODE_BUILD"; fi
-      if [[ -n "$NODE_TEST" ]];  then run_step "test (${NODE_TEST})"   "$NODE_PM" run "$NODE_TEST";  fi
     fi
     ;;
   shell)

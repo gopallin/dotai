@@ -40,11 +40,62 @@ if [[ -z "$EDITED_FILES" ]]; then
   exit 0
 fi
 
-REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-if [[ -z "$REPO_ROOT" ]]; then
-  exit 0  # Not inside a git repo — nothing to precommit
+
+
+# ── Layer 1a: which repositories did those writes land in? ───────────────────
+#
+# By the FILE's owner, not by cwd (2026-10-05). This guard used to grade only
+# the cwd repo and drop every other path as "written outside this repo" — true
+# for a scratch file, false for a file in a SIBLING repo, which was then
+# committed with no /precommit at all (nxl-shipping-server MR !891, built from
+# an nxl-shipping-client session). Writes are now grouped by the repository
+# that contains them, and EVERY such repository must hold its own PASS receipt
+# on its own current tree. The cwd repo is graded first; a path the transcript
+# could not resolve («unknown», some CLIs' fixtures) is attributed to it only.
+
+owning_root() {   # $1 = absolute path → physical root of the repo holding it, or nothing
+  local dir rest r
+  dir=$(dirname "$1"); rest=$(basename "$1")
+  while [[ ! -d "$dir" && "$dir" != "/" && "$dir" != "." ]]; do
+    rest="$(basename "$dir")/$rest"; dir=$(dirname "$dir")
+  done
+  dir=$(cd "$dir" 2>/dev/null && pwd -P) || return 0
+  r=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || return 0
+  [[ -n "$r" ]] && (cd "$r" 2>/dev/null && pwd -P)
+}
+
+CWD_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+[[ -n "$CWD_ROOT" ]] && CWD_ROOT=$(cd "$CWD_ROOT" 2>/dev/null && pwd -P)
+
+ROOTS=""
+ABS_EDITED=""
+while IFS= read -r f; do
+  [[ -z "$f" ]] && continue
+  if [[ "$f" == "«unknown»" ]]; then ABS_EDITED+="${f}"$'\n'; continue; fi
+  [[ "$f" != /* ]] && f="${CWD_ROOT:-$PWD}/${f}"
+  ABS_EDITED+="${f}"$'\n'
+  r=$(owning_root "$f")
+  [[ -n "$r" ]] || continue
+  grep -Fqx -- "$r" <<< "$ROOTS" || ROOTS+="${r}"$'\n'
+done <<< "$EDITED_FILES"
+EDITED_FILES="$ABS_EDITED"
+if [[ -n "$CWD_ROOT" ]]; then
+  ROOTS="${CWD_ROOT}"$'\n'"$(grep -Fxv -- "$CWD_ROOT" <<< "$ROOTS")"
 fi
 
+# ── gate_repo: the whole Layer 1b → Layer 2 check, for ONE repository ─────────
+#
+# Runs in a subshell after `cd "$ROOT"`, so every git call below sees that
+# repo; `exit` inside it ends only the subshell. REPO_NOTE names the repo in
+# every block message when it is not the session's cwd repo, because the fix
+# then has to be run from over there.
+gate_repo() {   # $1 = physical repo root
+REPO_ROOT="$1"
+REPO_NOTE=""
+if [[ "$REPO_ROOT" != "$CWD_ROOT" ]]; then
+  REPO_NOTE="↳ in repository ${REPO_ROOT} (not this session's cwd repo). Run /precommit THERE:  cd ${REPO_ROOT} && bash ~/.claude/commands/precommit.sh"
+  EDITED_FILES=$(grep -Fxv -- '«unknown»' <<< "$EDITED_FILES")
+fi
 # ── Layer 1b: Intersect the writes with what is actually dirty in THIS repo ────
 #
 # The previous version asked only "is the working tree dirty?" and treated any
@@ -68,7 +119,7 @@ while IFS= read -r f; do
   [[ "$f" != /* ]] && f="${REPO_ROOT}/${f}"
   case "$f" in
     "$REPO_ROOT"/*) rel="${f#"$REPO_ROOT"/}" ;;
-    *) continue ;;  # written outside this repo (scratchpad, $HOME, another repo)
+    *) continue ;;  # not this root — scratch, or graded under its own root
   esac
   while IFS= read -r d; do
     [[ -n "$d" && "$d" == "$rel" ]] && { RELEVANT+="${rel}"$'\n'; break; }
@@ -225,8 +276,52 @@ receipt_delta_report() {   # $1 = receipt path, $2 = this session's id (may be e
   fi
 }
 
+# ── Refusal breaker ───────────────────────────────────────────────────────────
+#
+# Observed 2026-10-01 (nxl-shipping-client): /precommit wrote status=FAIL for a
+# lint failure in a workspace the change never touched, and this guard then
+# refused nine consecutive stops with the identical message. Nothing moved
+# between them — the agent had already reported the situation and was waiting
+# for the user to choose, blocked on input rather than on work — so each
+# refusal cost a turn and produced nothing. The user broke the loop by hand.
+#
+# A gate that can only be satisfied by sweeping unrelated files into the branch
+# is not gating the change; it is holding the session hostage. So: when the
+# receipt says FAIL *on this exact tree*, and that same receipt has already
+# been refused REFUSAL_LIMIT times, the next stop is allowed with a loud
+# warning. The receipt still reads FAIL — nothing here is a pass. The count is
+# keyed to the receipt's content hash and reset whenever the tree differs from
+# it, so an agent that is actually working (editing, re-running /precommit)
+# never reaches the limit; only "same FAIL, same tree, again" does.
+#
+# Returns 0 = give up; sets REFUSAL_COUNT (this refusal's ordinal, 0 when the
+# breaker does not apply) and REFUSAL_LIMIT.
+#
+# ⚠️ Identical across all three stop-guard.sh files; tests/precommit.test.sh
+# compares them textually.
+precommit_refusal_breaker() {   # $1 = receipt path, $2 = current tree fingerprint
+  local receipt="$1" tree="$2" counter="$1-refusals" key prev n
+  REFUSAL_COUNT=0
+  REFUSAL_LIMIT=2
+  if [ "$(sed -n 's/^status=//p' "$receipt" | head -1)" != "FAIL" ] \
+     || [ "$(sed -n 's/^tree=//p' "$receipt" | head -1)" != "$tree" ]; then
+    rm -f "$counter"
+    return 1
+  fi
+  key=$(shasum -a 256 "$receipt" 2>/dev/null | cut -d' ' -f1)
+  prev=$(sed -n 's/^key=//p' "$counter" 2>/dev/null | head -1)
+  n=$(sed -n 's/^count=//p' "$counter" 2>/dev/null | head -1)
+  [ "$prev" = "$key" ] || n=0
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  n=$(( n + 1 ))
+  printf 'key=%s\ncount=%s\n' "$key" "$n" > "$counter" 2>/dev/null
+  REFUSAL_COUNT=$n
+  [ "$n" -gt "$REFUSAL_LIMIT" ]
+}
+
 if [[ ! -f "$RECEIPT" ]]; then
   echo "⛔ Code changes are pending but /precommit has not run in this repo." >&2
+  [[ -n "$REPO_NOTE" ]] && echo "$REPO_NOTE" >&2
   echo "Pending files this session wrote:" >&2
   printf '  %s\n' $RELEVANT >&2
   echo "Run /precommit; it must reach PRECOMMIT_STATUS=PASS." >&2
@@ -254,13 +349,29 @@ CURRENT_TREE=$({
 } | shasum -a 256 | cut -d' ' -f1)
 
 if [[ "$RECEIPT_STATUS" != "PASS" ]]; then
+  if precommit_refusal_breaker "$RECEIPT" "$CURRENT_TREE"; then
+    # Allowed, loudly. With exit 0 a Stop hook's stderr is not surfaced, so the
+    # warning travels as `systemMessage`, which Claude Code shows to the user.
+    # [unverified]: not yet observed rendering in a live session.
+    jq -cn --arg m "⚠️  stop-guard gave up: /precommit reported FAIL on this exact tree and nothing changed across ${REFUSAL_COUNT} stop attempts. The stop is allowed so the decision can return to you. The receipt still says FAIL — this is NOT a pass. (counter: ${RECEIPT}-refusals)" \
+      '{systemMessage:$m}'
+    exit 0
+  fi
   echo "⛔ /precommit ran but did not pass (receipt: status=${RECEIPT_STATUS:-unknown})." >&2
+  [[ -n "$REPO_NOTE" ]] && echo "$REPO_NOTE" >&2
   echo "Fix the failures and run /precommit again until it reports PRECOMMIT_STATUS=PASS." >&2
+  if [[ "$REFUSAL_COUNT" -gt 0 ]]; then
+    echo "" >&2
+    echo "Refusal ${REFUSAL_COUNT} of ${REFUSAL_LIMIT} on this unchanged tree. If the FAIL sits in files" >&2
+    echo "this change never touched and cannot be cleared from here, tell the user so —" >&2
+    echo "the next stop on this exact tree is let through with a warning." >&2
+  fi
   exit 2
 fi
 
 if [[ "$RECEIPT_TREE" != "$CURRENT_TREE" ]]; then
   echo "⛔ /precommit passed, but the working tree changed afterwards." >&2
+  [[ -n "$REPO_NOTE" ]] && echo "$REPO_NOTE" >&2
   echo "That PASS was earned on a different tree and does not cover the current one." >&2
 
   # The gate's decision is already made above; everything below is the report.
@@ -289,4 +400,21 @@ fi
 # don't sprinkle "should"). See docs/ABLATION.md for the same call on
 # complexity-guard.sh.
 
+rm -f "${RECEIPT}-refusals"   # a PASS on this tree ends any refusal streak
+exit 0
+
+}
+
+# ── Every repository the session wrote into must pass, cwd repo first ────────
+[[ -n "$ROOTS" ]] || exit 0
+LAST_OUT=""
+while IFS= read -r ROOT; do
+  [[ -z "$ROOT" ]] && continue
+  OUT=$( cd "$ROOT" 2>/dev/null && gate_repo "$ROOT" )
+  RC=$?
+  [[ "$RC" -eq 2 ]] && exit 2
+  [[ -n "$OUT" ]] && LAST_OUT="$OUT"
+done <<< "$ROOTS"
+# Only a give-up systemMessage ever reaches stdout; forward the last one.
+[[ -n "$LAST_OUT" ]] && printf '%s\n' "$LAST_OUT"
 exit 0

@@ -1,6 +1,6 @@
 ---
 name: ship
-description: Run full test suite, execute L1/L2/L3 simulated code review, commit changes, push feature branch, then open a Merge Request or Pull Request — detecting the forge from `origin` and calling its REST API with a scoped token (no forge CLI required). Trigger when user says "ship it", "test and push", "open MR", "open PR", or uses /ship.
+description: Run full test suite, execute L1/L2/L3 simulated code review, commit changes, push feature branch, then open a Merge Request or Pull Request by default (`--no-mr` to skip; `--release[=name]` to also push a release branch; `--target <branch>` to pick the base) — detecting the forge from `origin` and calling its REST API with a scoped token (no forge CLI required). Trigger when user says "ship it", "test and push", "open MR", "open PR", or uses /ship.
 ---
 
 # Ship Workflow (Test, Review, Commit, Push, and open MR/PR)
@@ -13,9 +13,39 @@ Automates the complete release verification and shipping cycle:
 3. Perform simulated L1/L2/L3 Code Review against `git diff`.
 4. Commit with structured discipline (Why, not just What).
 5. Push feature branch to origin.
-6. Open a Merge Request / Pull Request, routed by the detected forge — both go
-   through `curl` + `jq` + a scoped token (`$GITHUB_TOKEN` / `$GITLAB_TOKEN`).
-   No forge CLI is required; `gh` is used only if it happens to be installed.
+6. Open a Merge Request / Pull Request **by default**, routed by the detected
+   forge — both go through `curl` + `jq` + a scoped token (`$GITHUB_TOKEN` /
+   `$GITLAB_TOKEN`). No forge CLI is required; `gh` is used only if it happens
+   to be installed.
+
+A release branch is **not** pushed unless asked for. Both defaults can be
+flipped per invocation — see *Arguments* below.
+
+---
+
+## Arguments
+
+Everything after `/ship` is parsed as options. Flags and plain language both
+count; the trigger phrases ("ship it", "open MR", …) take the same qualifiers.
+
+| Option | Effect | Default |
+|---|---|---|
+| `--no-mr` / "不開 MR" / "don't open a PR" / "push only" | Skip Step 5: push, print the click-through URL, stop. | MR/PR **is opened** |
+| `--release` / "要 release" / "also push a release branch" | Run Step 4.5 with the derived name (`feature/x` → `release/x`). | release branch **skipped** |
+| `--release=<name>` / "release branch 叫 `<name>`" | Run Step 4.5 with that exact name. | — |
+| `--target <branch>` / "target `<branch>`" / "開到 `<branch>`" | MR/PR base branch. | `origin/HEAD`, else `main` |
+
+Resolve the options **once, before Step 1**, and echo the decision so the user
+can see what will happen before anything is pushed:
+
+```
+ship: mr=yes target=main release=no
+```
+
+**Do not ask.** The defaults are the answer when nothing was said; a question
+here turns a one-shot command back into a dialogue. The only prompts left in
+this skill are the ones where guessing could post to the wrong place
+(Step 5c, unknown forge) or where the body failed a CI pre-check.
 
 ---
 
@@ -40,6 +70,12 @@ git rev-parse --abbrev-ref HEAD
 
 - ❌ **If on `main` or `master`**: Stop immediately. Inform the user that `/ship` cannot be executed on primary branches.
 - ✅ **If on a feature branch**: Proceed to Step 2.
+
+**One `/ship` ships one repository — the cwd one.** Every step below runs
+`git` in cwd. If this session also wrote into a sibling repository (a feature
+that spans frontend and backend), that repo gets its own `/ship`, run from
+inside it, and `stop-guard` will refuse the stop until it also holds a
+`/precommit` PASS. Do not try to describe both repos' changes in one MR.
 
 ---
 
@@ -98,16 +134,21 @@ BRANCH=$(git rev-parse --abbrev-ref HEAD)
 git push origin "$BRANCH" 2>&1
 ```
 
-### Step 4.5: Optional Release Branch
+### Step 4.5: Release Branch (opt-in, skipped by default)
 
-Ask the user if they also want to push a release branch for this feature.
-- Suggest a default release branch name by replacing `feature/` with `release/` from the current branch name (e.g., `feature/labelkit-integration` -> `release/labelkit-integration`).
-- The user can confirm the default, provide a custom release branch name, or decline/skip.
-- If the user confirms or provides a name, create the branch locally, push it, and return to the feature branch:
+Run this step **only** when the invocation asked for it (`--release`,
+`--release=<name>`, or the equivalent in words — see *Arguments*). Otherwise
+skip it silently; do not ask whether the user wants one.
+
+- Default name: replace the leading `feature/` with `release/`
+  (e.g. `feature/labelkit-integration` → `release/labelkit-integration`).
+  A branch without a `feature/` prefix gets `release/<branch>`.
+- `--release=<name>` uses that name verbatim.
+- Create the branch locally, push it, and return to the feature branch:
 
 ```bash
-# Assuming the user confirmed and provided RELEASE_BRANCH
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+RELEASE_BRANCH="${RELEASE_BRANCH:-release/${CURRENT_BRANCH#feature/}}"
 git checkout -b "$RELEASE_BRANCH"
 git push origin "$RELEASE_BRANCH" 2>&1
 git checkout "$CURRENT_BRANCH"
@@ -115,18 +156,15 @@ git checkout "$CURRENT_BRANCH"
 
 ---
 
-### Step 5: Open the Merge Request / Pull Request (Optional)
+### Step 5: Open the Merge Request / Pull Request (default: yes)
 
-**Ask the user** before opening a MR/PR:
+The MR/PR is opened **without asking**. The target branch is `$TARGET_BRANCH`
+as detected in the forge sub-step below, unless `--target <branch>` (or the
+spoken equivalent) was given, in which case that value wins.
 
-- Suggest the default target branch (detected in the forge sub-step below via `$TARGET_BRANCH`).
-- The user can:
-  - **Confirm** the default target branch → detect forge and proceed to 5a / 5b / 5c.
-  - **Provide a custom target branch** → use that as `$TARGET_BRANCH` and proceed.
-  - **Decline / skip** → print a raw click-through URL from `git remote get-url origin`
-    and stop Step 5. No forge detection, no API call.
-
-**If the user declines**, print a near-exact URL from the raw remote and stop:
+**Only when the invocation said `--no-mr`** (or "不開 MR" / "push only"), skip
+this step: print a near-exact click-through URL from the raw remote and stop.
+No forge detection, no API call.
 
 ```bash
 REMOTE_URL=$(git remote get-url origin)
@@ -141,8 +179,7 @@ echo "Branch pushed. To open a PR/MR manually:"
 echo "  https://$clean/compare/$BRANCH"
 ```
 
-**If the user confirms** (default or custom target branch), detect the forge and
-proceed to 5a / 5b / 5c:
+**Otherwise** detect the forge and proceed to 5a / 5b / 5c:
 
 **Detect the forge from `origin` — do not assume GitLab.** GitHub has no
 `PRIVATE-TOKEN` API and GitLab has no `gh`, so guessing wrong wastes a step and
@@ -175,13 +212,58 @@ esac
 PROJECT_PATH=${rest%.git}
 
 # Default target branch, falling back to main when origin/HEAD is not set.
-# If the user provided a custom target branch above, override TARGET_BRANCH here.
-TARGET_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null \
-  | sed 's@^refs/remotes/origin/@@')
-TARGET_BRANCH="${TARGET_BRANCH:-main}"
+# A --target given on the /ship line was already put in TARGET_BRANCH by the
+# Arguments step and must not be overwritten here.
+if [ -z "$TARGET_BRANCH" ]; then
+  TARGET_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null \
+    | sed 's@^refs/remotes/origin/@@')
+  TARGET_BRANCH="${TARGET_BRANCH:-main}"
+fi
 
 echo "forge=$FORGE_HOST project=$PROJECT_PATH branch=$BRANCH → $TARGET_BRANCH"
 ```
+
+**Build the description from the repo's own template — before routing.** The
+forge applies `.gitlab/merge_request_templates/Default.md` (GitLab) or
+`.github/pull_request_template.md` (GitHub) **only in its web UI**. An MR/PR
+opened through the API gets exactly the body you send. nxl-shipping-server
+MR !891 (2026-10-05) failed its CI pre-check on the first pipeline for this
+reason: the check requires filled `## 說明` / `## 原因` sections and `/ship` had
+sent a `## Summary` body.
+
+```bash
+TEMPLATE=""
+for t in .gitlab/merge_request_templates/Default.md \
+         .github/pull_request_template.md .github/PULL_REQUEST_TEMPLATE.md \
+         pull_request_template.md PULL_REQUEST_TEMPLATE.md \
+         docs/pull_request_template.md; do
+  [ -f "$t" ] && { TEMPLATE="$t"; break; }
+done
+# A GitLab repo with templates but no Default.md: take the only/first one.
+[ -z "$TEMPLATE" ] && [ -d .gitlab/merge_request_templates ] && \
+  TEMPLATE=$(ls .gitlab/merge_request_templates/*.md 2>/dev/null | head -1)
+BODY_FILE=$(mktemp -t ship-body)
+echo "template=${TEMPLATE:-none}  body=$BODY_FILE"
+```
+
+Then write `$BODY_FILE`:
+
+- **Template found** → keep every heading **verbatim** and in order. Fill each
+  section with real content from the diff and the commit body; delete the
+  `<!-- … -->` placeholder comments (a section whose only content is a comment
+  reads as *unfilled* to a template gate); tick the checkboxes that apply
+  (`- [x]`); a section with nothing to say gets an explicit `None` line, never
+  an empty body. Write it in the template's language.
+- **No template** → fall back to `## Summary` followed by the commit body.
+- Either way, end with `---` and `*Shipped via /ship with L1/L2/L3 verification*`.
+
+Print the body in full before posting it, so a wrong section is visible in
+the transcript next to the resulting URL. There is no confirmation pause —
+the gate that replaces it is the repo's own check: if `CLAUDE.md` or the
+reviewer rules name a CI pre-check that reads the description (for example
+one driven by `CI_MERGE_REQUEST_DESCRIPTION`), run it against `$BODY_FILE`
+now. A failing pre-check is the one case where Step 5 stops and asks: show
+the failure, fix the body, and only then post.
 
 Then route on `$FORGE_HOST`:
 
@@ -220,14 +302,14 @@ case "$FORGE_HOST" in
   *)          API_BASE="https://$FORGE_HOST/api/v3" ;;
 esac
 
-BODY=$(printf '## Summary\n\n%s\n\n---\n*Shipped via /ship with L1/L2/L3 verification*' "$(git log -1 --format=%b)")
-
+# The body was written to $BODY_FILE above (template-shaped when the repo has
+# one). --rawfile keeps it verbatim; a quote or backslash in it cannot break the JSON.
 RESP=$(curl -s -w '\n%{http_code}' -X POST \
   -H "Authorization: Bearer $GH_TOKEN_VAL" \
   -H "Accept: application/vnd.github+json" \
   -H "X-GitHub-Api-Version: 2022-11-28" \
   -d "$(jq -n --arg t "$(git log -1 --format=%s)" --arg h "$BRANCH" \
-            --arg b "$TARGET_BRANCH" --arg body "$BODY" \
+            --arg b "$TARGET_BRANCH" --rawfile body "$BODY_FILE" \
         '{title:$t, head:$h, base:$b, body:$body}')" \
   "$API_BASE/repos/$PROJECT_PATH/pulls")
 
@@ -261,7 +343,7 @@ blast radius.
 if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
   gh pr create --base "$TARGET_BRANCH" --head "$BRANCH" \
     --title "$(git log -1 --format=%s)" \
-    --body "$(printf '## Summary\n\n%s\n\n---\n*Shipped via /ship with L1/L2/L3 verification*' "$(git log -1 --format=%b)")"
+    --body-file "$BODY_FILE"
 fi
 ```
 
@@ -298,20 +380,17 @@ curl -s --request POST \
   --data "$(jq -n \
       --arg s "$BRANCH" --arg t "$TARGET_BRANCH" \
       --arg title "$(git log -1 --format=%s)" \
-      --arg body "## Summary
-
-$(git log -1 --format=%b)
-
----
-*Shipped via /ship with L1/L2/L3 verification*" \
+      --rawfile body "$BODY_FILE" \
       '{source_branch:$s, target_branch:$t, title:$title, description:$body}')" \
   "https://$FORGE_HOST/api/v4/projects/$ENCODED_PATH/merge_requests" \
   | jq '{id, iid, web_url, state}'
 ```
 
-> Build the JSON with `jq -n`, never string interpolation — a commit body
-> containing a quote, backslash, or newline otherwise produces invalid JSON and the
-> API returns a 400 that reads like an auth failure.
+> Build the JSON with `jq -n` (`--rawfile` for the body), never string
+> interpolation — a body containing a quote, backslash, or newline otherwise
+> produces invalid JSON and the API returns a 400 that reads like an auth failure.
+> The body comes from `$BODY_FILE`, shaped by the repo's MR template when it has
+> one — see *Build the description* above.
 
 > **No `draft:` title prefix.** GitLab parses it and returns `draft: true`, which
 > blocks the merge button until someone manually clicks "Mark as ready" — a hidden
@@ -335,9 +414,9 @@ Report final execution status to the user:
 - ✅ Tests Passed
 - ✅ L1/L2/L3 Review Passed (LGTM)
 - ✅ Branch Pushed (`origin/<branch>`)
-- ✅ Release Branch Pushed (`origin/<release-branch>`) (if applicable)
-- ✅ MR/PR Created (provide direct `web_url` link) (if user confirmed)
-- ⏭️ MR/PR Skipped (provide raw click-through URL) (if user declined)
+- ✅ Release Branch Pushed (`origin/<release-branch>`) (only with `--release`)
+- ✅ MR/PR Created (provide direct `web_url` link) — the default
+- ⏭️ MR/PR Skipped (provide raw click-through URL) (only with `--no-mr`)
 
 If Step 5 could not complete (token missing, token lacks a permission, unknown
 host), say so explicitly — steps 1-4 succeeding is **not** "shipped". Report which
