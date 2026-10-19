@@ -214,7 +214,7 @@ Ran but FAIL? Still cannot stop.
 │   ├── parallel-design-agents/SKILL.md ← multi-agent workflow to explore different design options
 │   ├── preflight/SKILL.md      ← environment verification checklist before starting work
 │   ├── reviewer-rules/SKILL.md ← single source for the L1/L2/L3 review protocol (used by /ground + /ship)
-│   └── ship/SKILL.md           ← /ship test → L1/L2/L3 review → commit → push → open MR/PR (forge-routed)
+│   └── ship/SKILL.md           ← /ship test → L1/L2/L3 review → commit → push → open MR/PR (forge-routed; MR on by default, `--no-mr` / `--release[=name]` / `--target` flip it per run)
 ├── hooks/
 │   ├── hooks.json              ← hook event declarations
 │   ├── claude/
