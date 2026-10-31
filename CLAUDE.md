@@ -492,10 +492,18 @@ the escape is the user committing by hand, and a PreToolUse deny cannot trap the
 session. What happens when the hook itself errors or times out (an API outage,
 say) is unverified.
 
-"Probed" here means the installer's output loaded via `claude --settings … -p`.
-It has not yet been seen firing from an installed `~/.claude/settings.json` in
-an interactive session. To confirm, run `bash install.sh`, restart, stage a
-deliberate bug, and ask for a commit. Expect a `DOTAI-REVIEW-GATE` refusal.
+**Also observed firing from the installed `~/.claude/settings.json` in an
+interactive session (2026-10-31).** The test was a dry run of PR #55's own
+diff in a throwaway worktree.
+- The clean diff committed. Only timing shows the review ran: 14 s for a
+  `git commit -q`, and an allow leaves no transcript record, so this is
+  indirect.
+- The same diff plus a planted `"Bash(*)"` allow rule was refused at
+  `install.sh:244 [L2]`. That is direct evidence.
+
+The reviewer also pointed out that `tests/review-gate.test.sh` would not have
+caught the planted rule. The suite now asserts the installer grants exactly the
+reviewer's rules and nothing more.
 
 Known limits:
 - Not in `hooks/hooks.json` (the plugin manifest), on purpose. An agent hook's

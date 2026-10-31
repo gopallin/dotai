@@ -113,6 +113,20 @@ grep -q 'git -C' "$PROMPT_SRC" && ok || bad "prompt no longer tells the reviewer
 jq -e '.permissions.allow | index("Read(~/.claude/skills/reviewer-rules/**)")' "$S" >/dev/null && ok \
   || bad "no Read rule for the reviewer-rules skill — it lives outside every project and the Read is refused"
 
+# …and NOTHING else. These rules land in the user's global settings, so they
+# widen the main agent's permissions too. The checks above only look for the
+# expected rules, so an extra `Bash(*)` slipped past them. review-gate itself
+# caught that in a live dry run on 2026-10-31, and this check pins it.
+EXPECTED=$( { while IFS= read -r c; do
+                [ -n "$c" ] || continue
+                printf 'Bash(%s)\nBash(git -C * %s)\n' "$c" "${c#git }"
+              done <<< "$PROMPT_CMDS"
+              echo 'Read(~/.claude/skills/reviewer-rules/**)'; } | sort -u)
+ADDED=$(jq -r '.permissions.allow[] | select(. != "Bash(npm test)")' "$S" | sort -u)
+EXTRA=$(comm -13 <(printf '%s\n' "$EXPECTED") <(printf '%s\n' "$ADDED"))
+[ -z "$EXTRA" ] && ok \
+  || bad "installer grants allow rules the reviewer does not need (they apply to the main agent too): $(tr '\n' ' ' <<< "$EXTRA")"
+
 for c in $( (jq -r '.permissions.allow[] | select(test("^Bash\\(git (-C \\* )?diff"))' "$S" | tr ' ' '_') ); do
   grep -q -- '--no-ext-diff' <<< "$c" && ok \
     || bad "allow rule $c lacks --no-ext-diff — a repo diff driver could execute"
