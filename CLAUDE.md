@@ -223,7 +223,8 @@ Ran but FAIL? Still cannot stop.
 │   │   ├── context-budget-guard.sh ← Claude PreToolUse hook (advisory: reminds to /clear when session grows large)
 │   │   ├── handoff-reminder.sh ← Claude SessionStart hook (after /clear: offer /resume+/handoff or transcript rebuild)
 │   │   ├── secret-redact.sh    ← Claude PostToolUse hook (rewrites Bash output to scrub credentials before the model/transcript sees them)
-│   │   └── stack-rules.sh      ← Claude SessionStart hook (emits ONLY the detected stack's rules file)
+│   │   ├── stack-rules.sh      ← Claude SessionStart hook (emits ONLY the detected stack's rules file)
+│   │   └── review-gate.prompt.md ← Claude PreToolUse AGENT hook prompt (if: Bash(git commit *)): an independent reviewer reads the diff itself and refuses the commit on a concrete defect; replaces /ship's self-review
 │   ├── codex/
 │   │   ├── stop-guard.sh       ← Codex CLI Stop event hook
 │   │   ├── grounding-guard.sh  ← Codex PreToolUse hook (blocks first un-grounded apply_patch; also refuses a patch whose targets leave the scope_files: contract)
@@ -460,6 +461,52 @@ declaration, which is why user text counts. Suites: `tests/grounding-guard.test.
 # 2. let the session stop — expect stop-guard to name B and "Run /precommit THERE".
 # 3. with B on master, edit a file in B from A — expect branch-guard's block naming B.
 ```
+
+**review-gate — the reviewer is not the author — status `[probed]`.** Landed
+2026-10-31. `/ship` Step 2.5 had the agent that wrote a change review its own
+diff, and only a prompt made it run at all. A prompt-type hook does not fix
+that: it judges from the transcript only, and the transcript is the author's.
+An **agent** hook does. The harness spawns it, it runs `git diff` itself, and it
+reads `reviewer-rules` plus the project's own rules. It sits at PreToolUse with
+`if: "Bash(git commit *)"`, not on Stop. A Stop agent hook that could not be
+satisfied refused 9× in a row in a probe, and `stop_hook_active` turned out to be
+true on *every* stop after a block, so it cannot serve as a breaker. At
+PreToolUse a deny refuses only that commit, so the session can still stop, and
+the user committing by hand is the escape hatch.
+
+Observed live on 2.1.309 against the installer's own output:
+- a planted bug was denied with `path:line [L1]`
+- a clean diff was allowed and committed
+- `cd ../B && git commit` was reviewed in B via `git -C`
+- `git status` never spawned it
+- Sonnet cost $0.008–0.04 per commit, 3.5–5.5 s
+
+The reviewer runs in don't-ask mode, so every command it needs has an exact
+allow rule. In the probe, an unallowed `git -C … diff`, `cd … && git diff` or
+`Read` of the skill was refused, and the reviewer then fails closed.
+`tests/review-gate.test.sh` locks the prompt's commands to those rules.
+
+Fail-closed is a **deliberate exception** to reviewer-rules L2 "Guards fail OPEN".
+That rule exists because escaping a block usually needs the blocked tool. Here
+the escape is the user committing by hand, and a PreToolUse deny cannot trap the
+session. What happens when the hook itself errors or times out (an API outage,
+say) is unverified.
+
+"Probed" here means the installer's output loaded via `claude --settings … -p`.
+It has not yet been seen firing from an installed `~/.claude/settings.json` in
+an interactive session. To confirm, run `bash install.sh`, restart, stage a
+deliberate bug, and ask for a commit. Expect a `DOTAI-REVIEW-GATE` refusal.
+
+Known limits:
+- Not in `hooks/hooks.json` (the plugin manifest), on purpose. An agent hook's
+  prompt can only be inline there, which means a second copy that drifts.
+  Whether `${CLAUDE_PLUGIN_ROOT}` expands inside a prompt is also unverified.
+  The installer is the only registration path.
+- `git -c … commit`, `commit-tree` and scripts are not matched.
+- A sibling repo's own rules files may be unreadable, because they sit outside
+  the working dirs. The reviewer is told to say so.
+- Codex/agy have no agent hooks, so `/ship` keeps a self-review there, labelled
+  as one.
 
 ⛔ **Never write a precommit script (or a Makefile, or a test runner) into a repo
 to give the gate something to pass.** On 2026-08-21 detection failed in a

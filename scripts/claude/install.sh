@@ -180,7 +180,8 @@ else
 fi
 
 # Merge hooks — preserves all existing settings
-UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
+UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" \
+  --rawfile review "$DOTAI_DIR/hooks/claude/review-gate.prompt.md" '
   # Register Stop hook (Claude Code)
   .hooks.Stop = ([
     {
@@ -254,14 +255,54 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" '
           "timeout": 5
         }
       ]
+    },
+    {
+      # review-gate: an independent reviewer at `git commit`, replacing the
+      # /ship self-review. (No apostrophes in here: this jq program is
+      # single-quoted shell, and one stray quote ends it.) An AGENT hook, not a script — the harness spawns it and it
+      # reads the diff with its own tools, so the author neither decides whether
+      # it runs nor what it sees. `if` keeps it off every other Bash call; at
+      # PreToolUse a deny refuses only that commit, so unlike a Stop hook it
+      # cannot hold the session in a refusal loop. Sonnet, because it runs once
+      # per commit and Haiku (the default) is a weak reviewer.
+      "matcher": "Bash",
+      "hooks": [
+        {
+          "type": "agent",
+          "if": "Bash(git commit *)",
+          "model": "claude-sonnet-5-5",
+          "timeout": 180,
+          "statusMessage": "dotai review-gate: independent review of this commit",
+          "prompt": ($review | gsub("\\{\\{HOME\\}\\}"; $home))
+        }
+      ]
     }
   ] + (.hooks.PreToolUse // [] | map(select(
     # This regex is a CLEANUP list, not a registration list — it must keep naming
     # `complexity` and `read-dedup` even though neither is installed any more, so
     # that a re-install prunes their stale entries from an older settings.json.
     # Removing a name here orphans its registration forever. See docs/ABLATION.md.
-    (.hooks[0].command | test("shared/(complexity|branch|glab|secret|deployed)-guard\\.sh$|claude/(grounding|read-dedup|context-budget)-guard\\.sh$")) | not
+    # `// ""`: an agent hook has no .command, and `null | test()` aborts jq —
+    # which would leave settings.json unwritten on every re-install.
+    ((.hooks[0].command // "") | test("shared/(complexity|branch|glab|secret|deployed)-guard\\.sh$|claude/(grounding|read-dedup|context-budget)-guard\\.sh$"))
+    or ((.hooks[0].prompt // "") | test("DOTAI-REVIEW-GATE"))
+    | not
   )))) |
+  # The review-gate reviewer runs in dont-ask mode: a command with no allow rule
+  # is refused, and the reviewer then fails closed. Observed in a probe — it
+  # chose `git -C <dir> diff`, was refused, and blocked a clean commit. These are
+  # the exact forms its prompt permits: the -C pair is for a commit into a
+  # sibling repo (`cd ../B && git commit`), because `cd … && git diff` was refused
+  # too. Read-only; `--no-ext-diff` so a repo-configured diff driver cannot run.
+  # The Read rule: the protocol sits outside every project directory, and an
+  # unallowed Read of it was refused in the same probe.
+  .permissions.allow = ((.permissions.allow // []) + [
+    "Bash(git diff --cached --no-color --no-ext-diff)",
+    "Bash(git diff HEAD --no-color --no-ext-diff)",
+    "Bash(git -C * diff --cached --no-color --no-ext-diff)",
+    "Bash(git -C * diff HEAD --no-color --no-ext-diff)",
+    "Read(~/.claude/skills/reviewer-rules/**)"
+  ] | unique) |
   # Register PostToolUse hook. secret-redact rewrites the tool result via
   # `updatedToolOutput`, which is the only mechanism that withholds a credential
   # from the transcript — PostToolUse exit 2 cannot block, the tool already ran.
@@ -391,6 +432,7 @@ echo "  branch-guard     blocks WRITE commands and non-doc edits on master/main 
 echo "  glab-guard       blocks glab CLI, directs to curl + \$GITLAB_TOKEN + jq"
 echo "  secret-guard     blocks 'security dump-keychain' (unbounded secret dump)"
 echo "  secret-redact    scrubs credentials out of Bash output before the model sees them"
+echo "  review-gate      independent agent reviews the diff at every git commit (blocks concrete defects)"
 echo "  stack-rules      loads only the detected stack's rules (laravel|vue|node)"
 echo "  statusline       model · context-usage bar · /usage rate-limit bars"
 # Derived from what was actually installed — a hardcoded list silently goes

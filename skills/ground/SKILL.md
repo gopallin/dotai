@@ -118,7 +118,8 @@ If the change touches **no** data, state "No data dependency" and move on.
 Invoke the **`reviewer-rules`** skill and run its protocol against the change you
 are *about to make*, confirming the plan complies before emitting PASS.
 
-That skill is the single source of truth, shared with `/ship` Step 2.5. Do **not**
+That skill is the single source of truth, shared with the `review-gate` hook (and
+`/ship` Step 2.5 on Codex/agy). Do **not**
 inline a checklist here — this step and `/ship`'s previously carried separate copies
 and they had already drifted apart.
 

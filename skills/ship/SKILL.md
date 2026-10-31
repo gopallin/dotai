@@ -1,6 +1,6 @@
 ---
 name: ship
-description: Run full test suite, execute L1/L2/L3 simulated code review, commit changes, push feature branch, then open a Merge Request or Pull Request by default (`--no-mr` to skip; `--release[=name]` to also push a release branch; `--target <branch>` to pick the base) — detecting the forge from `origin` and calling its REST API with a scoped token (no forge CLI required). Trigger when user says "ship it", "test and push", "open MR", "open PR", or uses /ship.
+description: Run full test suite, commit changes (L1/L2/L3 review by the review-gate hook on Claude Code, a self-review on Codex/agy), push feature branch, then open a Merge Request or Pull Request by default (`--no-mr` to skip; `--release[=name]` to also push a release branch; `--target <branch>` to pick the base) — detecting the forge from `origin` and calling its REST API with a scoped token (no forge CLI required). Trigger when user says "ship it", "test and push", "open MR", "open PR", or uses /ship.
 ---
 
 # Ship Workflow (Test, Review, Commit, Push, and open MR/PR)
@@ -10,7 +10,8 @@ description: Run full test suite, execute L1/L2/L3 simulated code review, commit
 Automates the complete release verification and shipping cycle:
 1. Verify Git safety (not on `main`/`master`).
 2. Run test suites to ensure 100% green pipeline.
-3. Perform simulated L1/L2/L3 Code Review against `git diff`.
+3. L1/L2/L3 review: on Claude Code by the independent `review-gate` hook at
+   `git commit`; on Codex/agy a self-review in Step 2.5.
 4. Commit with structured discipline (Why, not just What).
 5. Push feature branch to origin.
 6. Open a Merge Request / Pull Request **by default**, routed by the detected
@@ -92,23 +93,25 @@ npm test 2>&1
 
 ---
 
-### Step 2.5: Simulated Code Review (L1 / L2 / L3 Check)
+### Step 2.5: Code Review (L1 / L2 / L3) — depends on the CLI
 
-Invoke the **`reviewer-rules`** skill and run its protocol against `git diff`.
+**Claude Code: skip this step.** The `review-gate` hook reviews the diff when
+Step 3 runs `git commit`. It is a separate agent spawned by the harness: it
+reads the diff itself, applies the `reviewer-rules` protocol plus the
+project's own rules, and refuses the commit on a concrete defect. A review here
+by the agent that wrote the change would be the author grading their own work,
+and is exactly what the hook replaced.
 
-That skill is the single source of truth, shared with `/ground` Step 4.5. Do **not**
-inline a checklist here — this step and `/ground`'s previously carried separate
-copies and they had already drifted apart.
+- **Commit refused** → the refusal names `path:line` and the level. Fix and
+  commit again. If you believe it is a false positive, stop and tell the user —
+  never reword, split, or route the commit around the gate (`git -c …`,
+  `commit-tree`, a script). The user deciding to commit themselves is the
+  escape hatch.
 
-Project-specific rules (table names, lock keys, base classes) are discovered from
-the project itself per that protocol. If none are found, say so and review against
-the generic L1/L2/L3 levels only — do not apply another project's rules from memory.
-
-- ❌ **If violations found**: Surface the exact violation to the user and auto-fix if obvious before committing.
-- ✅ **If LGTM**: Proceed to Step 3.
-- ⚠️ **If a level could not be checked** (no project rules for the assets touched):
-  say which level and why. Reporting "L1/L2/L3 passed" when a level was never
-  actually evaluated is a false pass.
+**Codex / agy: run it here.** They have no agent hooks, so nothing independent
+exists. Invoke the **`reviewer-rules`** skill against `git diff`, and report the
+result as a **self-review**, not an independent one. Report a level that could
+not be checked as unchecked; calling it passed is a false pass.
 
 ---
 
@@ -255,7 +258,9 @@ Then write `$BODY_FILE`:
   (`- [x]`); a section with nothing to say gets an explicit `None` line, never
   an empty body. Write it in the template's language.
 - **No template** → fall back to `## Summary` followed by the commit body.
-- Either way, end with `---` and `*Shipped via /ship with L1/L2/L3 verification*`.
+- Either way, end with `---` and `*Shipped via /ship*`. Do not claim a review the
+  body cannot evidence. On Claude Code the commit passing `review-gate` is that
+  evidence; on Codex/agy add "(L1/L2/L3 self-review)".
 
 Print the body in full before posting it, so a wrong section is visible in
 the transcript next to the resulting URL. There is no confirmation pause —
@@ -412,7 +417,8 @@ unintended host.
 
 Report final execution status to the user:
 - ✅ Tests Passed
-- ✅ L1/L2/L3 Review Passed (LGTM)
+- ✅ L1/L2/L3 Review: `review-gate` allowed the commit (Claude Code), or the
+  self-review result, labelled as such (Codex/agy)
 - ✅ Branch Pushed (`origin/<branch>`)
 - ✅ Release Branch Pushed (`origin/<release-branch>`) (only with `--release`)
 - ✅ MR/PR Created (provide direct `web_url` link) — the default
