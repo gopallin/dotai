@@ -210,9 +210,13 @@ SCOPE_FILE="/tmp/dotai_scope_${SESSION_ID}"
 # Per-CLI: the Codex and agy copies read the raw transcript, because their
 # JSONL shapes are not pinned down well enough to filter. extract_scope() below
 # is identical across the three (tests/grounding-guard.test.sh locks it).
+#
+# isMeta user records are excluded: that is how a skill's body is injected, and
+# /ground's own SKILL.md carries an example declaration on lines of their own —
+# so invoking /ground satisfied gate 1 before any grounding was done (2026-10-31).
 scope_source() {
   jq -r '
-    select(.type=="assistant" or .type=="user")
+    select(.type=="assistant" or (.type=="user" and .isMeta != true))
     | .message.content
     | if type=="string" then .
       else .[]? | select(.type=="text") | .text // empty
@@ -220,15 +224,27 @@ scope_source() {
   ' "$TRANSCRIPT" 2>/dev/null
 }
 
+# A declaration is a LINE: `scope_files:` / the marker preceded only by
+# whitespace, or by `"` where a raw-transcript JSON string begins (the Codex and
+# agy copies split JSONL on its escaped \n). Mid-sentence or inline-code mentions
+# are talk ABOUT the contract — observed 2026-10-31, an answer discussing this
+# guard satisfied gate 1 and cached "` 就能擴大。" as the session's only scope.
 extract_scope() {
   scope_source \
-    | awk '/scope_files:/ {
-        sub(/.*scope_files:[[:space:]]*/, "")
+    | awk 'match($0, /(^|")[[:space:]]*scope_files:[[:space:]]*/) {
+        $0 = substr($0, RSTART + RLENGTH)
         sub(/[",\\].*$/, "")
         sub(/[[:space:]]+$/, "")
         if (length($0)) print
       }' \
     | sort -u
+}
+
+# Marker lines, normalised to `GROUNDING_STATUS=PASS` / `GROUNDING_STATUS=SKIP …`.
+# PASS must end its line; SKIP carries its reason after it.
+grounding_markers() {
+  grep -E '(^|")[[:space:]]*GROUNDING_STATUS=(PASS[[:space:]]*("|$)|SKIP([[:space:]"]|$))' \
+    | sed -E 's/^.*GROUNDING_STATUS=/GROUNDING_STATUS=/; s/[[:space:]]*".*$//'
 }
 
 scope_allows() {   # $1 = repo-relative path; scope patterns on stdin file
@@ -259,7 +275,7 @@ in_scope() {
 SCOPE_NAME="${REL_CWD:-$REL}"
 
 # Gate-1 markers are read from the same source, for the same reason.
-MARKERS=$(scope_source | grep -o 'GROUNDING_STATUS=\(PASS\|SKIP[^"]*\)' 2>/dev/null)
+MARKERS=$(scope_source | grounding_markers)
 
 # ── Gate 1: the FIRST non-doc code edit of the session ────────────────────────
 #

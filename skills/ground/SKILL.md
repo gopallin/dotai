@@ -228,7 +228,15 @@ GROUNDING_STATUS=SKIP reason=single-line typo fix in error message, no logic/dat
   nothing. Observed 2026-10-05: the hook's refusal text used to satisfy gate 1
   on the next attempt, and ~40 junk `scope_files:` patterns were lifted from
   tool output. Codex and agy still scan the raw transcript (their JSONL shapes
-  are not pinned down).
+  are not pinned down). An injected skill body (an `isMeta` record) does not
+  count either. This file's own example declaration used to satisfy gate 1 as
+  soon as `/ground` was invoked.
+- **A declaration is a line of its own** (all three CLIs). Put `scope_files:` and
+  the marker at the start of a line, with indentation only. A PASS line ends
+  after `PASS`. A mention mid-sentence or in inline code (`` `GROUNDING_STATUS=PASS` ``)
+  is talk *about* the contract and counts for nothing. Observed 2026-10-31: an
+  answer explaining this guard satisfied gate 1, and its prose ("再印一行
+  `scope_files:` 就能擴大") became the session's only scope pattern.
 - **Transcript lag** [probed 2026-10-05]: Claude Code writes a response's
   blocks to the JSONL only after its tool call has run. A declaration and an
   edit in the **same** response therefore meet the hook before the declaration
