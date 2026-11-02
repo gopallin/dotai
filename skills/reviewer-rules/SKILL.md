@@ -1,13 +1,14 @@
 ---
 name: reviewer-rules
-description: The L1/L2/L3 code review protocol shared by /ground and /ship. Defines the three review levels and how to discover a project's own reviewer rules. Invoked by /ground Step 4.5 and /ship Step 2.5; also usable directly when reviewing a diff.
+description: The L1/L2/L3 code review protocol shared by /ground and the review-gate hook. Defines the three review levels and how to discover a project's own reviewer rules. Read by the review-gate agent hook at every git commit (Claude Code), invoked by /ground Step 4.5, and by /ship Step 2.5 on Codex/agy; also usable directly when reviewing a diff.
 ---
 
 # Reviewer Rules Protocol
 
 Single source of truth for the L1/L2/L3 review gate. `/ground` (before writing)
-and `/ship` (before committing) both run this protocol instead of carrying their
-own copies — those copies had already drifted apart.
+and the `review-gate` hook (at `git commit`, Claude Code) both read this file
+instead of carrying their own copies — those copies had already drifted apart.
+Codex/agy have no agent hooks, so `/ship` Step 2.5 runs it there as a self-review.
 
 It lives as a skill, not as a `rules/*.md` file, so that one copy works on all
 three CLIs: skills install to a known root on each (`~/.claude/skills/`,

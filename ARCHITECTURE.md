@@ -403,8 +403,8 @@ stdout, ignoring the exit code (see CLAUDE.md §agy Hook Contract).
 | Skill | Role |
 |---|---|
 | `ground` | The **checker** half of the front-of-work gate: restate the task, read 1–2 reference files, verify data/IDs, run the reviewer-rules protocol, then emit `GROUNDING_STATUS=PASS`. `grounding-guard.sh` blocks the first non-doc edit until it does. |
-| `ship` | Test → L1/L2/L3 review → commit → push → open MR/PR, routing to GitLab or GitHub by inspecting `origin` and calling its REST API with a Keychain token (no forge CLI). The body is built from the repo's own MR/PR template when it has one (the forge applies templates only in its web UI, so an API-opened MR with a `## Summary` body fails a template-checking CI gate — MR !891). One `/ship` ships one repo. |
-| `reviewer-rules` | The **single** source for the L1/L2/L3 review protocol, invoked by `/ground` Step 4.5 and `/ship` Step 2.5. It was previously inlined in both and had already drifted; project-specific rules are discovered from the project (`.claude/reviewer-rules.md` or a `## Reviewer Rules` section) rather than shipped globally. `tests/reviewer-rules.test.sh` fails if project-specific content reappears under `skills/` or `rules/`. |
+| `ship` | Test → commit (reviewed by the `review-gate` hook on Claude Code; a labelled self-review on Codex/agy) → push → open MR/PR, routing to GitLab or GitHub by inspecting `origin` and calling its REST API with a Keychain token (no forge CLI). The body is built from the repo's own MR/PR template when it has one (the forge applies templates only in its web UI, so an API-opened MR with a `## Summary` body fails a template-checking CI gate — MR !891). One `/ship` ships one repo. |
+| `reviewer-rules` | The **single** source for the L1/L2/L3 review protocol, read by the `review-gate` agent hook at every `git commit` (Claude Code), invoked by `/ground` Step 4.5, and by `/ship` Step 2.5 on Codex/agy only. It was previously inlined in both and had already drifted; project-specific rules are discovered from the project (`.claude/reviewer-rules.md` or a `## Reviewer Rules` section) rather than shipped globally. `tests/reviewer-rules.test.sh` fails if project-specific content reappears under `skills/` or `rules/`. |
 | `git-push` | Auto-detect GitLab/GitHub, apply the Keychain token. |
 | `gcloud` | This machine has no native `gcloud`/`kubectl`: every call runs in the `google/cloud-sdk` docker image with `~/.config/gcloud-cli` (login, expires daily) and `~/.config/gcloud-cli/kube` (kubeconfig) mounted. Carries the Logging / Pub/Sub / Monitoring-REST query templates and the dead-letter and `seek` cautions; project IDs stay in each project's own skill. |
 | `preflight` | Environment audit (branch, git state, env vars, MCP). |
@@ -610,6 +610,7 @@ for t in tests/*.test.sh; do bash "$t" || echo "FAILED: $t"; done
 | `agy-install.test.sh`, `codex-install.test.sh`, `skills-install.test.sh` | where each installer writes; the skill layout for all three CLIs, including cleanup of legacy flat files |
 | `stack-rules.test.sh` | stack detection and that exactly one rules file is emitted |
 | `reviewer-rules.test.sh` | fails if project-specific rules reappear under `skills/` or `rules/` |
+| `review-gate.test.sh` | the installer registers review-gate as an **agent** hook scoped by `if: Bash(git commit *)` (not on Stop), re-installs over its own entry, keeps the reviewer's diff commands identical to the allow rules (drift = fail closed on every commit), and that Codex/agy carry no copy |
 | `codex-hook-trust.test.sh` | that the Codex installer names every guard sitting at `enabled = false`, resolves its name through `hooks.json` rather than a hardcoded list, stays silent for entries that were never disabled, never rewrites trust state, never fails an install over a warning, and is not ported to the two CLIs that have no trust model |
 | `output-verbosity.test.sh` | the concise defaults (§9): `outputStyle` and `model_verbosity` are seeded but never overwrite a user's own value, `model_verbosity` lands **above** the first TOML table header rather than inside it, and the prose half keeps its full-length carve-out for explanations, errors, and warnings |
 | `ship-forge-detect.test.sh`, `map-command.test.sh`, `codex-handoff-reminder.test.sh` | forge routing from `origin`, the map command contract, the post-`/clear` reminder |
@@ -791,7 +792,8 @@ One of `laravel.md` / `vue.md` / `node.md`, chosen per session by
                                  …and holds later edits to scope_files:
    → implement
    → /precommit                  stop-guard blocks the stop until PASS on THIS tree
-   → /ship                       test → L1/L2/L3 review → commit → push → MR/PR
+   → /ship                       test → commit → push → MR/PR
+                                 review-gate (agent hook) reviews the diff at git commit
 ```
 
 For production incidents the loop starts one step earlier, at `/incident`:
