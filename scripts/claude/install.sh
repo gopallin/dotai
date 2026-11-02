@@ -151,6 +151,10 @@ cp "$DOTAI_DIR/hooks/claude/secret-redact.sh" "$CLAUDE_DIR/hooks/claude/secret-r
 chmod +x "$CLAUDE_DIR/hooks/claude/secret-redact.sh"
 echo "✅ claude/secret-redact.sh    → $CLAUDE_DIR/hooks/claude/secret-redact.sh"
 
+cp "$DOTAI_DIR/hooks/claude/review-diff.sh" "$CLAUDE_DIR/hooks/claude/review-diff.sh"
+chmod +x "$CLAUDE_DIR/hooks/claude/review-diff.sh"
+echo "✅ claude/review-diff.sh      → $CLAUDE_DIR/hooks/claude/review-diff.sh"
+
 # Remove hooks retired by the prompt-layer ablation (docs/ABLATION.md). Unregistering
 # them in settings.json is not enough — the scripts stay on disk, and a leftover file
 # is how a deleted guard quietly comes back (someone re-adds one settings.json line
@@ -291,16 +295,21 @@ UPDATED=$(echo "$EXISTING" | jq --arg home "$HOME" \
   # The review-gate reviewer runs in dont-ask mode: a command with no allow rule
   # is refused, and the reviewer then fails closed. Observed in a probe — it
   # chose `git -C <dir> diff`, was refused, and blocked a clean commit. These are
-  # the exact forms its prompt permits: the -C pair is for a commit into a
-  # sibling repo (`cd ../B && git commit`), because `cd … && git diff` was refused
-  # too. Read-only; `--no-ext-diff` so a repo-configured diff driver cannot run.
-  # The Read rule: the protocol sits outside every project directory, and an
-  # unallowed Read of it was refused in the same probe.
-  .permissions.allow = ((.permissions.allow // []) + [
+  # the exact forms its prompt permits. A commit into a sibling repo
+  # (`cd ../B && git commit`) is diffed by review-diff.sh, because `cd … && git
+  # diff` was refused too. That used to be `Bash(git -C * diff …)`, but a `*`
+  # mid-rule matches any text, so `git -C . -c core.fsmonitor=<cmd> diff …` ran
+  # <cmd> unprompted (Claude Code 2.1.309 warns: "allows any option at its *").
+  # The wrapper takes the `*` at the end and validates it; the old pair is pruned
+  # from earlier installs. Read-only; `--no-ext-diff` so a repo-configured diff
+  # driver cannot run. The Read rule: the protocol sits outside every project
+  # directory, and an unallowed Read of it was refused in the same probe.
+  .permissions.allow = ((.permissions.allow // [] | map(select(
+    test("^Bash\\(git -C \\* diff (--cached|HEAD) --no-color --no-ext-diff\\)$") | not
+  ))) + [
     "Bash(git diff --cached --no-color --no-ext-diff)",
     "Bash(git diff HEAD --no-color --no-ext-diff)",
-    "Bash(git -C * diff --cached --no-color --no-ext-diff)",
-    "Bash(git -C * diff HEAD --no-color --no-ext-diff)",
+    "Bash(bash \($home)/.claude/hooks/claude/review-diff.sh *)",
     "Read(~/.claude/skills/reviewer-rules/**)"
   ] | unique) |
   # Register PostToolUse hook. secret-redact rewrites the tool result via

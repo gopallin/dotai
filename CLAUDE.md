@@ -224,7 +224,8 @@ Ran but FAIL? Still cannot stop.
 │   │   ├── handoff-reminder.sh ← Claude SessionStart hook (after /clear: offer /resume+/handoff or transcript rebuild)
 │   │   ├── secret-redact.sh    ← Claude PostToolUse hook (rewrites Bash output to scrub credentials before the model/transcript sees them)
 │   │   ├── stack-rules.sh      ← Claude SessionStart hook (emits ONLY the detected stack's rules file)
-│   │   └── review-gate.prompt.md ← Claude PreToolUse AGENT hook prompt (if: Bash(git commit *)): an independent reviewer reads the diff itself and refuses the commit on a concrete defect; replaces /ship's self-review
+│   │   ├── review-gate.prompt.md ← Claude PreToolUse AGENT hook prompt (if: Bash(git commit *)): an independent reviewer reads the diff itself and refuses the commit on a concrete defect; replaces /ship's self-review
+│   │   └── review-diff.sh      ← review-gate's diff for a sibling repo (`<abs dir> cached|head`); replaces the `Bash(git -C * diff …)` allow rules, whose mid-rule `*` approved any inserted git option
 │   ├── codex/
 │   │   ├── stop-guard.sh       ← Codex CLI Stop event hook
 │   │   ├── grounding-guard.sh  ← Codex PreToolUse hook (blocks first un-grounded apply_patch; also refuses a patch whose targets leave the scope_files: contract)
@@ -509,6 +510,18 @@ The reviewer runs in don't-ask mode, so every command it needs has an exact
 allow rule. In the probe, an unallowed `git -C … diff`, `cd … && git diff` or
 `Read` of the skill was refused, and the reviewer then fails closed.
 `tests/review-gate.test.sh` locks the prompt's commands to those rules.
+
+**No `*` mid-rule (2026-11-02).** The sibling-repo rules were
+`Bash(git -C * diff --cached …)`, and Claude Code 2.1.309 flagged them at
+startup: "allows any option at its *". The binary's full text says a `*` with
+command text after it matches any options inserted there, and that for git
+`-c` and `--exec-path` can run arbitrary commands. So
+`git -C . -c core.fsmonitor=<cmd> diff --cached …` was auto-approved, for the
+main agent too, since the rule is global. Now `hooks/claude/review-diff.sh`
+takes `<absolute dir> cached|head` behind a trailing-`*` rule and refuses
+anything else. The installer prunes the old pair, and the suite fails on any
+Bash allow rule with a mid-command `*`. Whether the reviewer picks the wrapper
+correctly for a sibling-repo commit is `[unverified]` live.
 
 Fail-closed is a **deliberate exception** to reviewer-rules L2 "Guards fail OPEN".
 That rule exists because escaping a block usually needs the blocked tool. Here
