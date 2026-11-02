@@ -33,10 +33,13 @@ bad() { FAIL=$((FAIL+1)); echo "❌ $1" >&2; }
 TEST_HOME=$(mktemp -d)
 trap 'rm -rf "$TEST_HOME"' EXIT
 
-# A user's own allow rule and an unrelated PreToolUse hook must survive.
+# A user's own allow rule and an unrelated PreToolUse hook must survive. The two
+# `git -C *` rules are what an earlier install wrote; they must be pruned.
 mkdir -p "$TEST_HOME/.claude"
 cat > "$TEST_HOME/.claude/settings.json" <<'EOF'
-{"permissions":{"allow":["Bash(npm test)"]},
+{"permissions":{"allow":["Bash(npm test)",
+   "Bash(git -C * diff --cached --no-color --no-ext-diff)",
+   "Bash(git -C * diff HEAD --no-color --no-ext-diff)"]},
  "hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo mine"}]}]}}
 EOF
 
@@ -101,14 +104,47 @@ RULE_CMDS=$(jq -r '.permissions.allow[] | select(startswith("Bash(git diff")) | 
   prompt: $(tr '\n' '|' <<< "$PROMPT_CMDS")
   rules:  $(tr '\n' '|' <<< "$RULE_CMDS")"
 
-# Each form also needs its `git -C <dir>` twin: a commit into a sibling repo is
-# reviewed there, and `cd <dir> && git diff` was refused in the probe.
-while IFS= read -r c; do
-  [ -n "$c" ] || continue
-  jq -e --arg r "Bash(git -C * ${c#git })" '.permissions.allow | index($r)' "$S" >/dev/null && ok \
-    || bad "no 'git -C *' allow rule for: $c — sibling-repo commits would fail closed"
-done <<< "$PROMPT_CMDS"
-grep -q 'git -C' "$PROMPT_SRC" && ok || bad "prompt no longer tells the reviewer to use git -C for another repo"
+# A commit into a sibling repo is reviewed there, and `cd <dir> && git diff` was
+# refused in the probe — so the prompt names review-diff.sh and a rule allows it.
+WRAPPER="$TEST_HOME/.claude/hooks/claude/review-diff.sh"
+WRAPPER_RULE="Bash(bash $WRAPPER *)"
+jq -e --arg r "$WRAPPER_RULE" '.permissions.allow | index($r)' "$S" >/dev/null && ok \
+  || bad "no allow rule for review-diff.sh — sibling-repo commits would fail closed"
+[ -x "$WRAPPER" ] && ok || bad "installer did not install an executable review-diff.sh"
+grep -Fq "bash $TEST_HOME/.claude/hooks/claude/review-diff.sh <absolute dir> cached" <<< "$PROMPT" && ok \
+  || bad "prompt does not tell the reviewer the exact review-diff.sh command its rule allows"
+
+# The reason for the wrapper: a `*` with more command after it matches any
+# inserted option (`git -C . -c core.fsmonitor=<cmd> diff …` ran <cmd>
+# unprompted), and Claude Code 2.1.309 warns on it. Only a trailing `*` is safe,
+# and only in front of a script that validates what lands there.
+MID_STAR=$(jq -r '.permissions.allow[] | select(test("^Bash\\(.*\\*.*[^ *].*\\)$") and (test("^Bash\\(.*\\*\\)$") | not))' "$S")
+[ -z "$MID_STAR" ] && ok \
+  || bad "Bash allow rule with a mid-command * (approves any option inserted there): $MID_STAR"
+jq -e '.permissions.allow | map(select(startswith("Bash(git -C"))) | length == 0' "$S" >/dev/null && ok \
+  || bad "re-install did not prune the old Bash(git -C * diff …) rules"
+
+# The wrapper is what the trailing `*` trusts, so it must refuse anything that
+# is not <absolute dir> cached|head — an option in either slot above all.
+REPO="$TEST_HOME/repo"
+git init -q "$REPO"; git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
+printf 'a\n' > "$REPO/f"; git -C "$REPO" add f; git -C "$REPO" commit -qm init
+printf 'b\n' > "$REPO/f"; git -C "$REPO" add f; printf 'c\n' > "$REPO/f"
+OUT=$(bash "$WRAPPER" "$REPO" cached 2>&1)
+grep -q '^+b$' <<< "$OUT" && ! grep -q '^+c$' <<< "$OUT" && ok \
+  || bad "review-diff.sh cached did not show exactly the staged change: $OUT"
+OUT=$(bash "$WRAPPER" "$REPO" head 2>&1)
+grep -q '^+c$' <<< "$OUT" && ok || bad "review-diff.sh head did not include the unstaged change: $OUT"
+for args in "-c core.fsmonitor=touch$TEST_HOME/pwned cached" "relative/dir cached" "$REPO --output=$TEST_HOME/pwned" \
+            "$REPO cached extra" "$REPO" "$TEST_HOME/no-such-dir cached"; do
+  # shellcheck disable=SC2086 # word-splitting into separate arguments is the point
+  if bash "$WRAPPER" $args >/dev/null 2>&1; then
+    bad "review-diff.sh accepted: $args"
+  else
+    ok
+  fi
+done
+[ ! -e "$TEST_HOME/pwned" ] && ok || bad "review-diff.sh let an injected option run or write"
 
 jq -e '.permissions.allow | index("Read(~/.claude/skills/reviewer-rules/**)")' "$S" >/dev/null && ok \
   || bad "no Read rule for the reviewer-rules skill — it lives outside every project and the Read is refused"
@@ -119,18 +155,21 @@ jq -e '.permissions.allow | index("Read(~/.claude/skills/reviewer-rules/**)")' "
 # caught that in a live dry run on 2026-10-31, and this check pins it.
 EXPECTED=$( { while IFS= read -r c; do
                 [ -n "$c" ] || continue
-                printf 'Bash(%s)\nBash(git -C * %s)\n' "$c" "${c#git }"
+                printf 'Bash(%s)\n' "$c"
               done <<< "$PROMPT_CMDS"
+              echo "$WRAPPER_RULE"
               echo 'Read(~/.claude/skills/reviewer-rules/**)'; } | sort -u)
 ADDED=$(jq -r '.permissions.allow[] | select(. != "Bash(npm test)")' "$S" | sort -u)
 EXTRA=$(comm -13 <(printf '%s\n' "$EXPECTED") <(printf '%s\n' "$ADDED"))
 [ -z "$EXTRA" ] && ok \
   || bad "installer grants allow rules the reviewer does not need (they apply to the main agent too): $(tr '\n' ' ' <<< "$EXTRA")"
 
-for c in $( (jq -r '.permissions.allow[] | select(test("^Bash\\(git (-C \\* )?diff"))' "$S" | tr ' ' '_') ); do
+for c in $( (jq -r '.permissions.allow[] | select(test("^Bash\\(git diff"))' "$S" | tr ' ' '_') ); do
   grep -q -- '--no-ext-diff' <<< "$c" && ok \
     || bad "allow rule $c lacks --no-ext-diff — a repo diff driver could execute"
 done
+grep -q -- '--no-ext-diff' "$ROOT/hooks/claude/review-diff.sh" && ok \
+  || bad "review-diff.sh lacks --no-ext-diff — a repo diff driver could execute"
 
 [ "$(jq '[.permissions.allow[]] | length' "$S")" = "$(jq '[.permissions.allow[]] | unique | length' "$S")" ] && ok \
   || bad "permissions.allow has duplicates after two installs"

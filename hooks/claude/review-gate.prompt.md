@@ -20,9 +20,11 @@ form is refused by the permission policy:
 - `git diff HEAD --no-color --no-ext-diff` — only if the commit command has `-a`,
   `--all`, or names paths, since those commit changes that are not staged yet
 
-For a repository other than `cwd`, use the same command with `-C <absolute dir>`
-right after `git` (`git -C /abs/path diff --cached --no-color --no-ext-diff`).
-Never `cd <dir> && …` — that form is refused.
+For a repository other than `cwd`, run instead (`cached` or `head`, same rule as above):
+
+- `bash {{HOME}}/.claude/hooks/claude/review-diff.sh <absolute dir> cached`
+
+Never `cd <dir> && …` or `git -C …` — those forms are refused.
 
 Empty diff → return ok true (git will refuse the commit itself).
 
