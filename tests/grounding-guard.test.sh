@@ -177,7 +177,11 @@ FOREIGN=$(mkrepo feature/other)
 FOREIGN_P=$(cd "$FOREIGN" && pwd -P)
 FB=$(basename "$FOREIGN")
 printf '# other repo rules\nNEVER_USE_APP_HELPER\n' > "$FOREIGN/CLAUDE.md"
-T_XREPO=$(mktranscript "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"scope_files: src/*.php\\\\nscope_files: ../$FB/app/*.php\\\\nGROUNDING_STATUS=PASS\"}]}}")
+# `\\n` here is JSON's \n, i.e. a real newline once decoded — as in a real
+# transcript. These two fixtures used `\\\\n` (a literal backslash-n) until
+# 2026-10-31; the old match-anywhere extraction happened to tolerate that, and
+# line-anchored declarations (k9–k12) correctly do not.
+T_XREPO=$(mktranscript "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"scope_files: src/*.php\\nscope_files: ../$FB/app/*.php\\nGROUNDING_STATUS=PASS\"}]}}")
 
 echo "  ── cross-repo"
 # (k1) first edit into the foreign repo: refused once, carrying its rules
@@ -204,7 +208,7 @@ grep -Fq "../$FB/lib/y.php" <<< "$msg" && { echo "  ✅ (k3) block names the fil
   || { echo "  ❌ (k3) block does not name ../$FB/lib/y.php: $msg"; FAIL=$((FAIL+1)); }
 # (k4) absolute-path declaration, and the repo's CLAUDE.md already read: no brief
 T_XABS=$(mktranscript "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Read\",\"input\":{\"file_path\":\"$FOREIGN_P/CLAUDE.md\"}}]}}
-{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"scope_files: $FOREIGN_P/app/z.php\\\\nGROUNDING_STATUS=PASS\"}]}}")
+{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"scope_files: $FOREIGN_P/app/z.php\\nGROUNDING_STATUS=PASS\"}]}}")
 run "(k4) absolute declaration + CLAUDE.md already read -> exit 0" "$FEAT" "$T_XABS" "$FOREIGN/app/z.php" "test-k4" 0
 # (k5) a foreign repo on main is branch-guard's case, not this hook's
 FOREIGN_MAIN=$(mkrepo main)
@@ -227,6 +231,49 @@ run "(k7) scope quoted in a tool_result does not widen -> exit 2" "$FEAT" "$T_PO
 # the harness never wrote the assistant's declaration to the transcript.
 T_USERDECL=$(mktranscript '{"type":"user","message":{"content":"scope_files: src/*.php\nGROUNDING_STATUS=PASS"}}')
 run "(k8) declaration in a user message -> exit 0"    "$FEAT" "$T_USERDECL" "src/x.php" "test-k8" 0
+
+# (k9–k12) a MENTION of a marker is not a declaration. Observed live
+# 2026-10-31: an assistant answer that merely discussed this guard —
+# "`GROUNDING_STATUS=PASS` 和 `scope_files:` 都是 agent 自己宣告的。再印一行
+# `scope_files:` 就能擴大。" — satisfied gate 1 for the session, and gate 2
+# cached "` 就能擴大。" as the only declared pattern. A declaration is a line
+# of its own; anything mid-sentence or inside inline code is talk about it.
+# Exit 2 alone is not enough: before the fix, the prose mention passed gate 1
+# and gate 2 then refused on the junk pattern it had cached, so a bare exit-code
+# check passed for the wrong reason. Assert it is GATE 1 that refuses.
+gate1() {   # $1 name, $2 transcript, $3 file, $4 session
+  local json err code
+  json=$(printf '{"transcript_path":"%s","tool_input":{"file_path":"%s"},"session_id":"%s"}' "$2" "$3" "$4")
+  err=$(cd "$FEAT" && echo "$json" | bash "$HOOK" 2>&1 >/dev/null); code=$?
+  if [[ "$code" == 2 ]] && grep -q 'grounding was not done' <<< "$err"; then
+    echo "  ✅ $1 (gate 1 refused)"; PASS=$((PASS+1))
+  else
+    echo "  ❌ $1 (exit $code, not a gate-1 refusal: $(head -1 <<< "$err"))"; FAIL=$((FAIL+1))
+  fi
+}
+T_PROSE=$(mktranscript '{"type":"assistant","message":{"content":[{"type":"text","text":"- `GROUNDING_STATUS=PASS` 和 `scope_files:` 都是 agent 自己宣告的。範圍不夠時，再印一行 `scope_files:` 就能擴大。"}]}}')
+gate1 "(k9) PASS mentioned mid-sentence" "$T_PROSE" "src/x.php" "test-k9"
+T_PROSE_SKIP=$(mktranscript '{"type":"assistant","message":{"content":[{"type":"text","text":"For a trivial edit you would emit `GROUNDING_STATUS=SKIP reason=typo` instead."}]}}')
+gate1 "(k9) SKIP mentioned mid-sentence" "$T_PROSE_SKIP" "src/x.php" "test-k9b"
+
+T_PROSE_SCOPE=$(mktranscript '{"type":"assistant","message":{"content":[{"type":"text","text":"scope_files: src/*.php\nGROUNDING_STATUS=PASS"}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"範圍不夠時，再印一行 `scope_files:` 就能擴大。"}]}}')
+run "(k10) real declaration still binds -> exit 0"    "$FEAT" "$T_PROSE_SCOPE" "src/x.php" "test-k10" 0
+if [[ "$(cat /tmp/dotai_scope_test-k10 2>/dev/null)" == "src/*.php" ]]; then
+  echo "  ✅ (k10) prose mention adds no pattern to the scope"; PASS=$((PASS+1))
+else
+  echo "  ❌ (k10) scope picked up prose: $(tr '\n' '|' < /tmp/dotai_scope_test-k10 2>/dev/null)"; FAIL=$((FAIL+1))
+fi
+
+# (k11) a skill's body is injected as a user record with isMeta:true. /ground's
+# own SKILL.md carries an example declaration on lines of their own, so merely
+# invoking /ground satisfied gate 1 — before any grounding was done.
+T_SKILLMETA=$(mktranscript '{"type":"user","isMeta":true,"message":{"content":[{"type":"text","text":"Base directory for this skill: /x/ground\n\nscope_files: app/Services/ReplenishmentService.php\nGROUNDING_STATUS=PASS"}]}}')
+gate1 "(k11) declaration only in an injected skill body" "$T_SKILLMETA" "src/x.php" "test-k11"
+
+# (k12) a declaration on its own line still counts when indented.
+T_INDENT=$(mktranscript '{"type":"assistant","message":{"content":[{"type":"text","text":"Grounding:\n  scope_files: src/*.php\n  GROUNDING_STATUS=PASS\n"}]}}')
+run "(k12) indented standalone declaration -> exit 0" "$FEAT" "$T_INDENT" "src/x.php" "test-k12" 0
 
 # ── Cross-CLI: the ports must actually fire ──────────────────────────────────
 #
@@ -274,6 +321,26 @@ agy_run() {   # $1 = name, $2 = target file, $3 = session, $4 = expected decisio
 agy_run "(i3) agy: in scope -> allow"  "$FEAT/app/Services/A.php"      "test-i3" allow
 agy_run "(i4) agy: out of scope -> deny" "$FEAT/app/Http/Controllers/C.php" "test-i4" deny
 
+# (i11–i12) Codex/agy read the RAW transcript, so the guard's own refusal text
+# ("…then emit GROUNDING_STATUS=PASS.") landing in a tool result, or a mention
+# in prose, satisfied gate 1 there too. Only a marker on a line of its own —
+# or at the start of a JSON string — counts.
+T_RAW_MENTION=$(mktranscript '{"type":"function_call_output","output":"⛔ First code edit of this session, but grounding was not done.\nas scope_files: lines, then emit GROUNDING_STATUS=PASS.\nFor a genuinely trivial edit, emit: GROUNDING_STATUS=SKIP reason=<why>"}
+{"type":"message","role":"assistant","content":[{"type":"output_text","text":"再印一行 `scope_files:` 就能擴大。"}]}')
+err=$( (cd "$FEAT" && jq -cn --arg t "$T_RAW_MENTION" --arg c '*** Begin Patch
+*** Update File: src/x.php
+*** End Patch' '{transcript_path:$t,tool_input:{command:$c},session_id:"test-i11"}' \
+  | bash "$ROOT/hooks/codex/grounding-guard.sh" 2>&1 >/dev/null); echo "rc=$?")
+[[ "$err" == *"rc=2" ]] && grep -q 'grounding was not done' <<< "$err" \
+  && { echo "  ✅ (i11) codex: marker only in refusal text / prose -> gate 1 refuses"; PASS=$((PASS+1)); } \
+  || { echo "  ❌ (i11) codex: not a gate-1 refusal: $(head -1 <<< "$err") / ${err##*rc=}"; FAIL=$((FAIL+1)); }
+out=$( (cd "$FEAT" && jq -cn --arg t "$T_RAW_MENTION" --arg f "$FEAT/src/x.php" \
+    '{toolCall:{name:"write_to_file",args:{TargetFile:$f}},transcriptPath:$t,conversationId:"test-i12"}' \
+  | bash "$ROOT/hooks/agy/grounding-guard.sh" 2>/dev/null) )
+[[ "$(jq -r '.decision // ""' <<< "$out")" == deny ]] && grep -q 'grounding was not done' <<< "$(jq -r '.reason // ""' <<< "$out")" \
+  && { echo "  ✅ (i12) agy: marker only in refusal text / prose -> gate 1 denies"; PASS=$((PASS+1)); } \
+  || { echo "  ❌ (i12) agy: not a gate-1 deny: $out"; FAIL=$((FAIL+1)); }
+
 # Cross-repo on the two ports: the first patch/edit into the sibling repo is
 # refused once with its rules, the retry passes, and the scope still binds.
 codex_x() {   # $1 = name, $2 = patch, $3 = session, $4 = expected exit, $5 = stderr must contain ("" = skip)
@@ -320,7 +387,7 @@ agy_x "(i10) agy: foreign file out of scope -> deny"                       "$FOR
 # another refuses — so it is locked textually.
 extract_fn() { sed -n "/^$2()/,/^}/p" "$1" | sed 's/#.*//' | tr -d ' \t' | sed '/^$/d'; }
 # relpath() is the cross-repo helper (../other/… from cwd); same duplication, same lock.
-for fn in extract_scope scope_allows relpath; do
+for fn in extract_scope scope_allows relpath grounding_markers; do
   ref=$(extract_fn "$ROOT/hooks/claude/grounding-guard.sh" "$fn")
   if [[ -z "$ref" ]]; then
     echo "  ❌ (j) could not extract $fn() from claude/grounding-guard.sh"; FAIL=$((FAIL+1))

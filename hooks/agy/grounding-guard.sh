@@ -152,15 +152,27 @@ scope_source() {
 /g' "$TRANSCRIPT" 2>/dev/null
 }
 
+# A declaration is a LINE: `scope_files:` / the marker preceded only by
+# whitespace, or by `"` where a raw-transcript JSON string begins (the Codex and
+# agy copies split JSONL on its escaped \n). Mid-sentence or inline-code mentions
+# are talk ABOUT the contract — observed 2026-10-31, an answer discussing this
+# guard satisfied gate 1 and cached "` 就能擴大。" as the session's only scope.
 extract_scope() {
   scope_source \
-    | awk '/scope_files:/ {
-        sub(/.*scope_files:[[:space:]]*/, "")
+    | awk 'match($0, /(^|")[[:space:]]*scope_files:[[:space:]]*/) {
+        $0 = substr($0, RSTART + RLENGTH)
         sub(/[",\\].*$/, "")
         sub(/[[:space:]]+$/, "")
         if (length($0)) print
       }' \
     | sort -u
+}
+
+# Marker lines, normalised to `GROUNDING_STATUS=PASS` / `GROUNDING_STATUS=SKIP …`.
+# PASS must end its line; SKIP carries its reason after it.
+grounding_markers() {
+  grep -E '(^|")[[:space:]]*GROUNDING_STATUS=(PASS[[:space:]]*("|$)|SKIP([[:space:]"]|$))' \
+    | sed -E 's/^.*GROUNDING_STATUS=/GROUNDING_STATUS=/; s/[[:space:]]*".*$//'
 }
 
 scope_allows() {   # $1 = repo-relative path; scope patterns on stdin file
@@ -194,11 +206,12 @@ COUNT=$(cat "$COUNTER_FILE" 2>/dev/null)
 
 SKIPPED=0
 if [[ "$COUNT" -lt 1 ]]; then
-  if grep -q 'GROUNDING_STATUS=PASS' "$TRANSCRIPT" 2>/dev/null; then
+  MARKERS=$(scope_source | grounding_markers)
+  if grep -q '^GROUNDING_STATUS=PASS' <<< "$MARKERS"; then
     extract_scope > "$SCOPE_FILE" 2>/dev/null
     echo "1" > "$COUNTER_FILE"
     # Fall through to gate 2 — the declared scope binds the first edit too.
-  elif grep -q 'GROUNDING_STATUS=SKIP' "$TRANSCRIPT" 2>/dev/null; then
+  elif grep -q '^GROUNDING_STATUS=SKIP' <<< "$MARKERS"; then
     echo "1" > "$COUNTER_FILE"
     SKIPPED=1
     # An explicit SKIP declares no scope — but a foreign repo's rules still

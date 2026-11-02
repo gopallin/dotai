@@ -451,8 +451,32 @@ assistant's and the user's); Codex/agy still scan the raw transcript. Also
 `[probed]`: Claude Code appends a response's blocks to the JSONL only after
 its tool call runs, and two assistant text blocks carrying the declaration
 were never written at all — the session was unblocked by the user pasting the
-declaration, which is why user text counts. Suites: `tests/grounding-guard.test.sh`
-(52), `tests/precommit.test.sh` (182), `tests/branch-guard.test.sh` (70),
+declaration, which is why user text counts.
+
+**Mentions are not declarations — 2026-10-31, `[probed]`.** Restricting the
+search to conversation text was not enough. A session that only *discussed*
+this guard had already met gate 1 through an inline
+`` `GROUNDING_STATUS=PASS` `` in an answer, and gate 2 then cached three
+fragments of prose (`` ` 就能擴大。 ``…) as the whole scope. The same class
+existed in two more places. Invoking `/ground` injects its SKILL.md as an
+`isMeta` user record, and that file's example declaration sits on lines of
+its own. Codex/agy matched their own refusal text ("…then emit
+GROUNDING_STATUS=PASS.") anywhere in the raw transcript.
+
+All three CLIs now treat only a declaration on a line of its own as one, via
+`extract_scope()` / `grounding_markers()`, identical in each copy and
+parity-locked. A line counts when it is preceded by nothing but indentation,
+or by `"` where a raw JSON string begins. The Claude guard also skips `isMeta`
+records. The fix was replayed against the real transcript and dropped exactly
+the three junk patterns. Two old fixtures had encoded a literal backslash-n
+and were corrected.
+
+Assistant declarations went missing from the JSONL again in this session,
+twice. Both times the session was unblocked by the user pasting the
+declaration. So that is now `[probed]` ×3: write the declaration expecting
+the user may need to paste it.
+
+Suites: `tests/grounding-guard.test.sh` (62), `tests/precommit.test.sh` (182), `tests/branch-guard.test.sh` (70),
 `tests/ship-forge-detect.test.sh` (31). To confirm the new paths live:
 
 ```bash
